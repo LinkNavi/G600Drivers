@@ -1,0 +1,10 @@
+<RCC>
+  <qresource prefix="/qml">
+    <file alias="main.qml">qml/main.qml</file>
+    <file alias="ButtonTile.qml">qml/ButtonTile.qml</file>
+    <file alias="BindingEditor.qml">qml/BindingEditor.qml</file>
+
+    <file alias="LedPanel.qml">qml/LedPanel.qml</file>
+    <file alias="DpiPanel.qml">qml/DpiPanel.qml</file>
+  </qresource>
+</RCC>
