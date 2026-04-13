@@ -27,6 +27,8 @@ public:
     Q_INVOKABLE QVariantMap getLed(int profileIdx) const;
     Q_INVOKABLE void setProfileName(int idx, const QString &name);
     Q_INVOKABLE void setAbsMisc(int profileIdx, int val);
+    Q_INVOKABLE void setOnboard(int profileIdx, const QString &ring, const QString &g7, const QString &g8);
+    Q_INVOKABLE QVariantMap getOnboard(int profileIdx) const;
     Q_INVOKABLE void setDpi(int profileIdx, int d1, int d2, int d3, int d4, int def, int shift);
     Q_INVOKABLE QVariantMap getDpi(int profileIdx) const;
 

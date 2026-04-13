@@ -45,7 +45,7 @@ ApplicationWindow {
                 spacing: 8
 
                 Text {
-                    text: "PROFILES"
+                    text: "PROFILES (3 onboard)"
                     color: subtext
                     font.pixelSize: 11
                     font.letterSpacing: 1.5
@@ -123,22 +123,7 @@ ApplicationWindow {
                                 }
                             }
 
-                            Rectangle {
-                                width: 20; height: 20; radius: 4
-                                color: delHov.containsMouse ? "#f38ba8" : "transparent"
-                                visible: config.profiles.length > 1
-                                Text { anchors.centerIn: parent; text: "✕"; color: root.text; font.pixelSize: 11 }
-                                MouseArea {
-                                    id: delHov
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: {
-                                        config.removeProfile(index)
-                                        if (selProfile >= config.profiles.length)
-                                            selProfile = config.profiles.length - 1
-                                    }
-                                }
-                            }
+
                         }
                     }
                 }
@@ -282,6 +267,15 @@ ApplicationWindow {
                     Rectangle { Layout.fillWidth: true; height: 1; color: root.border }
 
                     DpiPanel {
+                        Layout.fillWidth: true
+                        profileIdx: selProfile
+                        textColor: root.text; subColor: root.subtext
+                        cardColor: root.card; accentColor: root.accent
+                    }
+
+                    Rectangle { Layout.fillWidth: true; height: 1; color: root.border }
+
+                    OnboardPanel {
                         Layout.fillWidth: true
                         profileIdx: selProfile
                         textColor: root.text; subColor: root.subtext

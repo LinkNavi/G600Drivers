@@ -5,6 +5,8 @@
     <file alias="BindingEditor.qml">qml/BindingEditor.qml</file>
 
     <file alias="LedPanel.qml">qml/LedPanel.qml</file>
+
     <file alias="DpiPanel.qml">qml/DpiPanel.qml</file>
+    <file alias="OnboardPanel.qml">qml/OnboardPanel.qml</file>
   </qresource>
 </RCC>

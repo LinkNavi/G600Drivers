@@ -16,21 +16,36 @@
 #include <linux/uinput.h>
 #include <linux/hidraw.h>
 #include <strings.h>
+
 /* ── devices ── */
-#define DEV_KBD    "/dev/input/event4"
-#define DEV_MOUSE  "/dev/input/event3"
-#define DEV_PROF   "/dev/input/event5"
-#define DEV_HIDRAW "/dev/hidraw1"
+/* Stable symlinks for hidraw — interface 1 has the profile feature reports */
+#define DEV_HIDRAW_SYMLINK "/dev/input/by-id/usb-Logitech_Gaming_Mouse_G600_4FD9CE8DE3650017-if01-hidraw"
+#define G600_NAME          "Logitech Gaming Mouse G600"
+#define G600_VID           0x046d
+#define G600_PID           0xc24a
 
 /* ── config ── */
 #define CFG_DIR  "/.config/g600d"
 #define CFG_FILE "/.config/g600d/g600d.conf"
 
 /* ── limits ── */
-#define MAX_PROFILES   8
-#define NUM_GKEYS     13
+#define MAX_PROFILES   3
+#define NUM_GKEYS     12
 #define NUM_MKEYS      5
 #define MAX_MACRO_STEPS 64
+
+
+/* ── Special action codes ── */
+#define SPECIAL_BASE         0x10000
+#define SPECIAL_DPI_SHIFT    (SPECIAL_BASE + 0)
+#define SPECIAL_PROFILE_1    (SPECIAL_BASE + 1)
+#define SPECIAL_PROFILE_2    (SPECIAL_BASE + 2)
+#define SPECIAL_PROFILE_3    (SPECIAL_BASE + 3)
+#define SPECIAL_PROFILE_4    (SPECIAL_BASE + 4)
+#define SPECIAL_PROFILE_NEXT (SPECIAL_BASE + 5)
+#define SPECIAL_PROFILE_PREV (SPECIAL_BASE + 6)
+#define SPECIAL_DPI_UP       (SPECIAL_BASE + 7)
+#define SPECIAL_DPI_DOWN     (SPECIAL_BASE + 8)
 
 /* ── HID ── */
 #define G600_REPORT_SIZE 154
@@ -40,7 +55,6 @@
 #define LED_SOLID   0
 #define LED_BREATHE 1
 #define LED_CYCLE   2
-#define DPI_SHIFT 4
 
 /* ──────────────────────────────────────────────
    Key name table
@@ -73,10 +87,19 @@ static const KeyEntry KEY_TABLE[] = {
     {"U",KEY_U},{"V",KEY_V},{"W",KEY_W},{"X",KEY_X},{"Y",KEY_Y},{"Z",KEY_Z},
     {"0",KEY_0},{"1",KEY_1},{"2",KEY_2},{"3",KEY_3},{"4",KEY_4},
     {"5",KEY_5},{"6",KEY_6},{"7",KEY_7},{"8",KEY_8},{"9",KEY_9},
-    {"BTN_LEFT",BTN_LEFT},{"BTN_RIGHT",BTN_RIGHT},{"BTN_MIDDLE",BTN_MIDDLE},{"BTN_SIDE",BTN_SIDE},{"BTN_EXTRA",BTN_EXTRA}, {"DPI_SHIFT", DPI_SHIFT},
+    {"BTN_LEFT",BTN_LEFT},{"BTN_RIGHT",BTN_RIGHT},{"BTN_MIDDLE",BTN_MIDDLE},{"BTN_SIDE",BTN_SIDE},{"BTN_EXTRA",BTN_EXTRA},
+    {"DPI_SHIFT",    SPECIAL_DPI_SHIFT},
+    {"PROFILE_1",    SPECIAL_PROFILE_1},
+    {"PROFILE_2",    SPECIAL_PROFILE_2},
+    {"PROFILE_3",    SPECIAL_PROFILE_3},
+    {"PROFILE_NEXT", SPECIAL_PROFILE_NEXT},
+    {"PROFILE_PREV", SPECIAL_PROFILE_PREV},
+    {"DPI_UP",       SPECIAL_DPI_UP},
+    {"DPI_DOWN",     SPECIAL_DPI_DOWN},
     {"NONE", 0},
     {NULL, -1}
 };
+
 
 static int keyname_to_code(const char *name) {
     char upper[64]; size_t i;
@@ -114,6 +137,101 @@ typedef struct {
     int          nsteps;
 } Binding;
 
+#define HID_MOD_LCTRL  0x01
+#define HID_MOD_LSHIFT 0x02
+#define HID_MOD_LALT   0x04
+#define HID_MOD_LMETA  0x08
+#define HID_MOD_RCTRL  0x10
+#define HID_MOD_RSHIFT 0x20
+#define HID_MOD_RALT   0x40
+#define HID_MOD_RMETA  0x80
+
+/* ── Linux keycode → HID keycode ────────────────────────────────────── */
+typedef struct { int linux_code; uint8_t hid_code; uint8_t hid_mod; } HIDEntry;
+static const HIDEntry HID_TABLE[] = {
+    {KEY_A,0x04,0},{KEY_B,0x05,0},{KEY_C,0x06,0},{KEY_D,0x07,0},
+    {KEY_E,0x08,0},{KEY_F,0x09,0},{KEY_G,0x0a,0},{KEY_H,0x0b,0},
+    {KEY_I,0x0c,0},{KEY_J,0x0d,0},{KEY_K,0x0e,0},{KEY_L,0x0f,0},
+    {KEY_M,0x10,0},{KEY_N,0x11,0},{KEY_O,0x12,0},{KEY_P,0x13,0},
+    {KEY_Q,0x14,0},{KEY_R,0x15,0},{KEY_S,0x16,0},{KEY_T,0x17,0},
+    {KEY_U,0x18,0},{KEY_V,0x19,0},{KEY_W,0x1a,0},{KEY_X,0x1b,0},
+    {KEY_Y,0x1c,0},{KEY_Z,0x1d,0},
+    {KEY_1,0x1e,0},{KEY_2,0x1f,0},{KEY_3,0x20,0},{KEY_4,0x21,0},
+    {KEY_5,0x22,0},{KEY_6,0x23,0},{KEY_7,0x24,0},{KEY_8,0x25,0},
+    {KEY_9,0x26,0},{KEY_0,0x27,0},
+    {KEY_ENTER,0x28,0},{KEY_ESC,0x29,0},{KEY_BACKSPACE,0x2a,0},
+    {KEY_TAB,0x2b,0},{KEY_SPACE,0x2c,0},{KEY_MINUS,0x2d,0},
+    {KEY_EQUAL,0x2e,0},{KEY_LEFTBRACE,0x2f,0},{KEY_RIGHTBRACE,0x30,0},
+    {KEY_BACKSLASH,0x31,0},{KEY_SEMICOLON,0x33,0},{KEY_APOSTROPHE,0x34,0},
+    {KEY_GRAVE,0x35,0},{KEY_COMMA,0x36,0},{KEY_DOT,0x37,0},{KEY_SLASH,0x38,0},
+    {KEY_CAPSLOCK,0x39,0},
+    {KEY_F1,0x3a,0},{KEY_F2,0x3b,0},{KEY_F3,0x3c,0},{KEY_F4,0x3d,0},
+    {KEY_F5,0x3e,0},{KEY_F6,0x3f,0},{KEY_F7,0x40,0},{KEY_F8,0x41,0},
+    {KEY_F9,0x42,0},{KEY_F10,0x43,0},{KEY_F11,0x44,0},{KEY_F12,0x45,0},
+    {KEY_PRINT,0x46,0},{KEY_SCROLLLOCK,0x47,0},{KEY_PAUSE,0x48,0},
+    {KEY_INSERT,0x49,0},{KEY_HOME,0x4a,0},{KEY_PAGEUP,0x4b,0},
+    {KEY_DELETE,0x4c,0},{KEY_END,0x4d,0},{KEY_PAGEDOWN,0x4e,0},
+    {KEY_RIGHT,0x4f,0},{KEY_LEFT,0x50,0},{KEY_DOWN,0x51,0},{KEY_UP,0x52,0},
+    {KEY_F13,0x68,0},{KEY_F14,0x69,0},{KEY_F15,0x6a,0},{KEY_F16,0x6b,0},
+    {KEY_F17,0x6c,0},{KEY_F18,0x6d,0},{KEY_F19,0x6e,0},{KEY_F20,0x6f,0},
+    {KEY_F21,0x70,0},{KEY_F22,0x71,0},{KEY_F23,0x72,0},{KEY_F24,0x73,0},
+    {KEY_VOLUMEUP,0xe9,0},{KEY_VOLUMEDOWN,0xea,0},{KEY_MUTE,0xe2,0},
+    {KEY_PLAYPAUSE,0xcd,0},{KEY_NEXTSONG,0xb5,0},{KEY_PREVIOUSSONG,0xb6,0},
+    {KEY_STOPCD,0xb7,0},
+    /* modifiers — returned as mod flags with key=0x00 */
+    {KEY_LEFTCTRL,  0x00, HID_MOD_LCTRL},
+    {KEY_LEFTSHIFT, 0x00, HID_MOD_LSHIFT},
+    {KEY_LEFTALT,   0x00, HID_MOD_LALT},
+    {KEY_LEFTMETA,  0x00, HID_MOD_LMETA},
+    {KEY_RIGHTCTRL, 0x00, HID_MOD_RCTRL},
+    {KEY_RIGHTSHIFT,0x00, HID_MOD_RSHIFT},
+    {KEY_RIGHTALT,  0x00, HID_MOD_RALT},
+    {KEY_RIGHTMETA, 0x00, HID_MOD_RMETA},
+    {0, 0, 0}
+};
+
+/* Convert a single linux keycode to HID keycode + modifier flags */
+static int linux_to_hid(int linux_code, uint8_t *hid_key, uint8_t *hid_mod) {
+    for (const HIDEntry *e = HID_TABLE; e->linux_code; e++) {
+        if (e->linux_code == linux_code) {
+            *hid_key = e->hid_code;
+            *hid_mod = e->hid_mod;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/* Convert a Binding (single key rebind only) to a G600Button struct.
+ * Returns 0 on success, -1 if not representable in onboard flash. */
+static int binding_to_g600btn(const Binding *b, uint8_t *code, uint8_t *mod, uint8_t *key) {
+    if (b->is_macro) return -1; /* macros can't be stored onboard */
+    int kc = b->keycode;
+
+    /* special virtual keycodes */
+    if (kc == SPECIAL_DPI_UP)       { *code=0x11; *mod=0; *key=0; return 0; }
+    if (kc == SPECIAL_DPI_DOWN)     { *code=0x12; *mod=0; *key=0; return 0; }
+    if (kc == SPECIAL_PROFILE_NEXT) { *code=0x14; *mod=0; *key=0; return 0; }
+    if (kc == SPECIAL_PROFILE_PREV) { *code=0x14; *mod=0; *key=0; return 0; } /* no prev on G600 */
+    if (kc == 0) { *code=0; *mod=0; *key=0; return 0; } /* NONE */
+
+    /* mouse buttons */
+    if (kc == BTN_LEFT)   { *code=0; *mod=1; *key=0; return 0; }
+    if (kc == BTN_RIGHT)  { *code=0; *mod=2; *key=0; return 0; }
+    if (kc == BTN_MIDDLE) { *code=0; *mod=3; *key=0; return 0; }
+    if (kc == BTN_SIDE)   { *code=0; *mod=4; *key=0; return 0; }
+    if (kc == BTN_EXTRA)  { *code=0; *mod=5; *key=0; return 0; }
+
+    /* keyboard key */
+    uint8_t hk=0, hm=0;
+    if (linux_to_hid(kc, &hk, &hm) == 0) {
+        *code=0; *mod=hm; *key=hk; return 0;
+    }
+
+    return -1;
+}
+
+
 /* ──────────────────────────────────────────────
    Profile
    ────────────────────────────────────────────── */
@@ -122,7 +240,7 @@ static const int SRC_GKEYS[NUM_GKEYS] = {
     KEY_7,KEY_8,KEY_9,KEY_0,KEY_MINUS,KEY_EQUAL,
 };
 static const char *GKEY_NAMES[NUM_GKEYS] = {
-    "G8", "G9","G10","G11","G12","G13","G14","G15","G16","G17","G18","G19","G20"
+    "G9","G10","G11","G12","G13","G14","G15","G16","G17","G18","G19","G20"
 };
 static const int SRC_MKEYS[NUM_MKEYS] = { BTN_LEFT, BTN_RIGHT, BTN_MIDDLE, BTN_SIDE, BTN_EXTRA };
 static const char *MKEY_NAMES[NUM_MKEYS] = { "BTN_LEFT","BTN_RIGHT","MIDDLE","TILT_LEFT","TILT_RIGHT" };
@@ -141,6 +259,11 @@ typedef struct {
     uint16_t dpi_shift;     /* G-Shift DPI, 0=disabled */
     uint8_t  dpi_default;   /* 1-4 */
     int      dpi_enabled;
+    /* onboard button remaps (written to HID flash) */
+    Binding  onboard_ring;   /* button index 2 */
+    Binding  onboard_g7;     /* button index 6 */
+    Binding  onboard_g8;     /* button index 7 */
+    int      onboard_enabled;
 } Profile;
 
 typedef struct {
@@ -332,6 +455,10 @@ static void config_load(Config *cfg, const char *path) {
             int d = atoi(val); cur->led_duration = (uint8_t)(d<1?1:d>15?15:d); cur->led_enabled = 1; goto next;
         }
 
+        if (strcasecmp(key, "ONBOARD_RING") == 0) { parse_binding(&cur->onboard_ring, val); cur->onboard_enabled = 1; goto next; }
+        if (strcasecmp(key, "ONBOARD_G7")   == 0) { parse_binding(&cur->onboard_g7,   val); cur->onboard_enabled = 1; goto next; }
+        if (strcasecmp(key, "ONBOARD_G8")   == 0) { parse_binding(&cur->onboard_g8,   val); cur->onboard_enabled = 1; goto next; }
+
         /* G-keys */
         for (int i = 0; i < NUM_GKEYS; i++) {
             if (strcasecmp(key, GKEY_NAMES[i]) == 0)         { parse_binding(&cur->gkeys_normal[i], val); goto next; }
@@ -351,36 +478,43 @@ static void config_load(Config *cfg, const char *path) {
 }
 
 static void config_write_default(const char *path) {
-    FILE *f = fopen(path, "w"); if (!f) { perror("fopen config"); return; }
+    FILE *f = fopen(path, "w");
+    if (!f) { perror("fopen config"); return; }
+
+    const char *profile_names[3] = {"profile1", "profile2", "profile3"};
+    const int   abs_misc_vals[3] = {32, 64, 128};
+
     fprintf(f,
-        "# G600 Daemon Config\n"
-        "# Simple rebind:  G9 = F13\n"
-        "# Macro:          G10 = macro:<trigger>:<hold>: step, step, ...\n"
-        "#   trigger: press | release\n"
-        "#   hold:    once | repeat | toggle\n"
-        "#   steps:   KEY, MOD+KEY, MOD+MOD+KEY, or Nms (delay)\n"
-        "# Example:  G11 = macro:press:once: LEFTCTRL+C, 50ms, LEFTCTRL+V\n\n"
-        "# LED: led_r/led_g/led_b = 0-255, led_effect = solid|breathe|cycle\n"
-        "#      led_duration = 1-15 (seconds, breathe/cycle only)\n\n"
-        "[default]\n"
-        "abs_misc = 32\n\n"
-        "# Uncomment and edit for additional hardware profiles\n"
-        "#[profile2]\n"
-        "#abs_misc = 64\n\n"
-        "#[profile3]\n"
-        "#abs_misc = 128\n\n"
-        "G9  = F13\nG10 = F14\nG11 = F15\nG12 = F16\n"
-        "G13 = F17\nG14 = F18\nG15 = F19\nG16 = F20\n"
-        "G17 = F21\nG18 = F22\nG19 = F23\nG20 = F24\n\n"
-        "SHIFT_G9  = F1\nSHIFT_G10 = F2\nSHIFT_G11 = F3\nSHIFT_G12 = F4\n"
-        "SHIFT_G13 = F5\nSHIFT_G14 = F6\nSHIFT_G15 = F7\nSHIFT_G16 = F8\n"
-        "SHIFT_G17 = F9\nSHIFT_G18 = F10\nSHIFT_G19 = F11\nSHIFT_G20 = F12\n\n"
-        "BTN_LEFT   = BTN_LEFT\n"
-        "BTN_RIGHT  = BTN_RIGHT\n"
-        "MIDDLE     = BTN_MIDDLE\n"
-        "TILT_LEFT  = BTN_SIDE\n"
-        "TILT_RIGHT = BTN_EXTRA\n"
+        "# G600 Daemon Config — 3 profiles matching mouse onboard slots\n"
+        "# Profile 1 = hardware slot 1 (ABS_MISC=32)\n"
+        "# Profile 2 = hardware slot 2 (ABS_MISC=64)\n"
+        "# Profile 3 = hardware slot 3 (ABS_MISC=128)\n"
+        "# G8 cycles between them on the mouse.\n\n"
+        "# Rebind:  G9 = F13\n"
+        "# Macro:   G9 = macro:<press|release>:<once|repeat|toggle>: KEY, Nms, KEY\n"
+        "# Onboard: ONBOARD_G7/G8/RING = key (stored in mouse flash)\n"
+        "# Special: PROFILE_NEXT, DPI_UP, DPI_DOWN, DPI_SHIFT\n\n"
     );
+
+    for (int p = 0; p < 3; p++) {
+        fprintf(f, "[%s]\n", profile_names[p]);
+        fprintf(f, "abs_misc = %d\n\n", abs_misc_vals[p]);
+        fprintf(f, "# LED\n#led_r = 255\n#led_g = 255\n#led_b = 255\n#led_effect = solid\n#led_duration = 4\n\n");
+        fprintf(f, "# DPI\n#dpi_1 = 1200\n#dpi_2 = 0\n#dpi_3 = 0\n#dpi_4 = 0\n#dpi_default = 1\n#dpi_shift = 0\n\n");
+        fprintf(f, "# Onboard buttons (stored in mouse flash)\n");
+        fprintf(f, "ONBOARD_RING = BTN_MIDDLE\n");
+        fprintf(f, "ONBOARD_G7   = BTN_MIDDLE\n");
+        fprintf(f, "ONBOARD_G8   = PROFILE_NEXT\n\n");
+        fprintf(f, "# G-keys\n");
+        const char *gnames[] = {"G9","G10","G11","G12","G13","G14","G15","G16","G17","G18","G19","G20"};
+        const char *fn[]     = {"F13","F14","F15","F16","F17","F18","F19","F20","F21","F22","F23","F24"};
+        const char *sfn[]    = {"F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12"};
+        for (int i = 0; i < 12; i++) fprintf(f, "%s = %s\n", gnames[i], fn[i]);
+        fprintf(f, "\n");
+        for (int i = 0; i < 12; i++) fprintf(f, "SHIFT_%s = %s\n", gnames[i], sfn[i]);
+        fprintf(f, "\nMIDDLE     = BTN_MIDDLE\nTILT_LEFT  = BTN_SIDE\nTILT_RIGHT = BTN_EXTRA\n\n");
+    }
+
     fclose(f);
     printf("Wrote default config to %s\n", path);
 }
@@ -417,7 +551,7 @@ static int uinput_setup(void) {
     ioctl(uinput_fd, UI_SET_KEYBIT, BTN_RIGHT);
     struct uinput_setup usetup = {0};
     strncpy(usetup.name, "G600 Macro Keys", UINPUT_MAX_NAME_SIZE);
-    usetup.id.bustype = BUS_USB; usetup.id.vendor = 0x046d; usetup.id.product = 0xc24a;
+    usetup.id.bustype = BUS_VIRTUAL; usetup.id.vendor = 0x046d; usetup.id.product = 0x0001;
     if (ioctl(uinput_fd, UI_DEV_SETUP, &usetup) < 0) { perror("UI_DEV_SETUP"); return -1; }
     if (ioctl(uinput_fd, UI_DEV_CREATE) < 0)          { perror("UI_DEV_CREATE"); return -1; }
     return 0;
@@ -610,6 +744,36 @@ static void dpi_apply(const Profile *p, int idx) {
                 p->dpi_default, p->dpi_shift);
 }
 
+static void onboard_apply(const Profile *p, int idx) {
+    if (!p->onboard_enabled || hidraw_fd < 0) return;
+    uint8_t buf[G600_REPORT_SIZE] = {0};
+    buf[0] = profile_report_id(idx);
+    if (ioctl(hidraw_fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) < 0) { perror("HIDIOCGFEATURE"); return; }
+
+    /* write ring (button 2), G7 (button 6), G8 (button 7) */
+    const struct { int idx; const Binding *b; } btns[] = {
+        {2, &p->onboard_ring},
+        {6, &p->onboard_g7},
+        {7, &p->onboard_g8},
+    };
+    for (int i = 0; i < 3; i++) {
+        int offset = 31 + btns[i].idx * 3;
+        uint8_t code=0, mod=0, key=0;
+        if (binding_to_g600btn(btns[i].b, &code, &mod, &key) == 0) {
+            buf[offset]   = code;
+            buf[offset+1] = mod;
+            buf[offset+2] = key;
+        } else {
+            fprintf(stderr, "onboard: binding not representable in flash\n");
+        }
+    }
+
+    if (ioctl(hidraw_fd, HIDIOCSFEATURE(G600_REPORT_SIZE), buf) < 0)
+        perror("HIDIOCSFEATURE (onboard)");
+    else
+        printf("Onboard buttons written to profile %d\n", idx);
+}
+
 /* ──────────────────────────────────────────────
    Globals
    ────────────────────────────────────────────── */
@@ -621,6 +785,16 @@ static int gshift = 0;
 static void sig_handler(int s) { (void)s; running = 0; }
 static Profile *active_profile(void) { return &cfg.profiles[cur_profile]; }
 
+static void write_all_profiles(void) {
+    printf("Writing all %d profiles to mouse flash...\n", cfg.num_profiles);
+    for (int i = 0; i < cfg.num_profiles && i < 3; i++) {
+        led_apply(&cfg.profiles[i], i);
+        dpi_apply(&cfg.profiles[i], i);
+        onboard_apply(&cfg.profiles[i], i);
+    }
+    printf("All profiles written.\n");
+}
+
 static void switch_profile(int idx) {
     if (idx == cur_profile) return;
     stop_all_macros();
@@ -628,11 +802,17 @@ static void switch_profile(int idx) {
     printf("Profile: %s\n", cfg.profiles[idx].name);
     led_apply(&cfg.profiles[idx], idx);
     dpi_apply(&cfg.profiles[idx], idx);
+    onboard_apply(&cfg.profiles[idx], idx);
 }
 
 static void switch_profile_by_abs(int abs_val) {
-    for (int i = 0; i < cfg.num_profiles; i++)
-        if (cfg.profiles[i].abs_misc_val == abs_val) { switch_profile(i); return; }
+    /* Map hardware ABS_MISC values to profile indices */
+    int idx = -1;
+    if      (abs_val == 32)  idx = 0;
+    else if (abs_val == 64)  idx = 1;
+    else if (abs_val == 128) idx = 2;
+    if (idx >= 0 && idx < cfg.num_profiles)
+        switch_profile(idx);
 }
 
 /* ──────────────────────────────────────────────
@@ -653,15 +833,10 @@ static void handle_kbd(struct input_event *ev) {
 }
 
 static void handle_mouse(struct input_event *ev) {
-    if (ev->type != EV_KEY) return;
-    for (int i = 0; i < NUM_MKEYS; i++) {
-        if (ev->code != SRC_MKEYS[i]) continue;
-        dispatch(&active_profile()->mkeys[i], ev->value, NUM_GKEYS * 2 + i);
-        return;
-    }
-    if (ev->code == BTN_LEFT || ev->code == BTN_RIGHT) {
-        emit(EV_KEY, ev->code, ev->value); emit(EV_SYN, SYN_REPORT, 0);
-    }
+    /* We don't grab fd_mouse so the kernel delivers events to the desktop
+     * normally. We only need to read here to avoid the buffer filling up.
+     * Don't re-emit anything — that would cause double events. */
+    (void)ev;
 }
 
 static void handle_prof(struct input_event *ev) {
@@ -672,6 +847,91 @@ static void handle_prof(struct input_event *ev) {
 /* ──────────────────────────────────────────────
    Main
    ────────────────────────────────────────────── */
+/* ──────────────────────────────────────────────
+   Device auto-discovery
+   ────────────────────────────────────────────── */
+
+/* Open an event device and check if it belongs to the G600 */
+static int g600_check_device(const char *path, int *has_rel, int *has_abs, int *has_gkeys) {
+    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) return 0;
+
+    char name[256] = {0};
+    if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) < 0) { close(fd); return 0; }
+    if (strstr(name, "G600") == NULL) { close(fd); return 0; }
+
+    struct input_id id;
+    if (ioctl(fd, EVIOCGID, &id) < 0) { close(fd); return 0; }
+    if (id.vendor != G600_VID || id.product != G600_PID) { close(fd); return 0; }
+
+    /* Check event types */
+    uint8_t evbits[EV_MAX/8+1] = {0};
+    ioctl(fd, EVIOCGBIT(0, sizeof(evbits)), evbits);
+    *has_rel = (evbits[EV_REL/8] >> (EV_REL%8)) & 1;
+    *has_abs = (evbits[EV_ABS/8] >> (EV_ABS%8)) & 1;
+
+    /* Check if it has G-key scancodes (KEY_1 through KEY_EQUAL) */
+    uint8_t keybits[KEY_MAX/8+1] = {0};
+    ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits);
+    /* G9-G20 map to KEY_1(2) through KEY_EQUAL(13) */
+    int has_k1 = (keybits[KEY_1/8] >> (KEY_1%8)) & 1;
+    int has_b  = (keybits[KEY_B/8] >> (KEY_B%8)) & 1; /* G-Shift sends KEY_B */
+    *has_gkeys = has_k1 && has_b && !(*has_rel);
+
+    close(fd);
+    return 1;
+}
+
+static int g600_find_devices(char *kbd, char *mouse, char *prof, size_t bufsz) {
+    int found_kbd=0, found_mouse=0, found_prof=0;
+    char path[64];
+
+    for (int i = 0; i < 32; i++) {
+        snprintf(path, sizeof(path), "/dev/input/event%d", i);
+        int has_rel=0, has_abs=0, has_gkeys=0;
+        if (!g600_check_device(path, &has_rel, &has_abs, &has_gkeys)) continue;
+
+        printf("Found G600 device: %s (rel=%d abs=%d gkeys=%d)\n",
+               path, has_rel, has_abs, has_gkeys);
+
+        if (has_rel && !found_mouse)       { strncpy(mouse, path, bufsz-1); found_mouse=1; }
+        else if (has_gkeys && !found_kbd)  { strncpy(kbd,   path, bufsz-1); found_kbd=1;   }
+        else if (has_abs && !found_prof)   { strncpy(prof,  path, bufsz-1); found_prof=1;  }
+    }
+
+    return found_kbd && found_mouse && found_prof;
+}
+
+/* Find the hidraw interface 1 for the G600 (has profile feature reports) */
+static int g600_find_hidraw(char *out, size_t bufsz) {
+    /* Try stable symlink first */
+    if (access(DEV_HIDRAW_SYMLINK, F_OK) == 0) {
+        strncpy(out, DEV_HIDRAW_SYMLINK, bufsz-1);
+        return 1;
+    }
+    /* Fall back: scan hidraw devices, pick interface 1 (if01) */
+    for (int i = 0; i < 16; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/dev/hidraw%d", i);
+        int fd = open(path, O_RDWR);
+        if (fd < 0) continue;
+        struct hidraw_devinfo info = {0};
+        if (ioctl(fd, HIDIOCGRAWINFO, &info) == 0 &&
+            info.vendor == G600_VID && info.product == G600_PID) {
+            /* Try to read profile 1 report — only interface 1 responds */
+            uint8_t buf[G600_REPORT_SIZE] = {0};
+            buf[0] = REPORT_ID_P0;
+            if (ioctl(fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) == 0) {
+                close(fd);
+                strncpy(out, path, bufsz-1);
+                return 1;
+            }
+        }
+        close(fd);
+    }
+    return 0;
+}
+
 int main(void) {
     signal(SIGINT, sig_handler); signal(SIGTERM, sig_handler);
 
@@ -685,11 +945,25 @@ int main(void) {
     if (access(cfg_path, F_OK) != 0) config_write_default(cfg_path);
     config_load(&cfg, cfg_path);
 
-    int fd_kbd   = open(DEV_KBD,   O_RDONLY | O_NONBLOCK); if (fd_kbd   < 0) { perror("open kbd");   return 1; }
-    int fd_mouse = open(DEV_MOUSE, O_RDONLY | O_NONBLOCK); if (fd_mouse < 0) { perror("open mouse"); return 1; }
-    int fd_prof  = open(DEV_PROF,  O_RDONLY | O_NONBLOCK); if (fd_prof  < 0) { perror("open prof");  return 1; }
+    char dev_kbd[64]={0}, dev_mouse[64]={0}, dev_prof[64]={0}, dev_hidraw[64]={0};
+    printf("Scanning for G600 devices...\n");
+    if (!g600_find_devices(dev_kbd, dev_mouse, dev_prof, sizeof(dev_kbd))) {
+        fprintf(stderr, "Could not find all G600 event devices\n");
+        return 1;
+    }
+    if (!g600_find_hidraw(dev_hidraw, sizeof(dev_hidraw))) {
+        fprintf(stderr, "Warning: Could not find G600 hidraw device (LED/DPI disabled)\n");
+    }
+    printf("KBD:    %s\n", dev_kbd);
+    printf("MOUSE:  %s\n", dev_mouse);
+    printf("PROF:   %s\n", dev_prof);
+    printf("HIDRAW: %s\n", dev_hidraw[0] ? dev_hidraw : "(none)");
 
-    hidraw_fd = open(DEV_HIDRAW, O_RDWR);
+    int fd_kbd   = open(dev_kbd,   O_RDONLY | O_NONBLOCK); if (fd_kbd   < 0) { perror("open kbd");   return 1; }
+    int fd_mouse = open(dev_mouse, O_RDONLY | O_NONBLOCK); if (fd_mouse < 0) { perror("open mouse"); return 1; }
+    int fd_prof  = open(dev_prof,  O_RDONLY | O_NONBLOCK); if (fd_prof  < 0) { perror("open prof");  return 1; }
+
+    hidraw_fd = dev_hidraw[0] ? open(dev_hidraw, O_RDWR) : -1;
     if (hidraw_fd < 0) perror("open hidraw (LED disabled)");
 
     if (uinput_setup() < 0) return 1;
@@ -699,30 +973,28 @@ int main(void) {
     int wd = -1;
     if (fd_ino >= 0) wd = inotify_add_watch(fd_ino, cfg_path, IN_CLOSE_WRITE | IN_MODIFY);
 
-    led_apply(active_profile(), cur_profile);
-    dpi_apply(active_profile(), cur_profile);
+    write_all_profiles();
     printf("g600d running. Profile: %s\n", active_profile()->name);
 
-    struct pollfd fds[4] = {
-        {fd_kbd,   POLLIN, 0}, {fd_mouse, POLLIN, 0},
-        {fd_prof,  POLLIN, 0}, {fd_ino,   POLLIN, 0},
+    struct pollfd fds[3] = {
+        {fd_kbd,  POLLIN, 0},
+        {fd_prof, POLLIN, 0},
+        {fd_ino,  POLLIN, 0},
     };
 
     struct input_event ev;
     while (running) {
-        int r = poll(fds, 4, 500);
+        int r = poll(fds, 3, 500);
         if (r < 0) { if (errno == EINTR) continue; break; }
-        if (fds[0].revents & POLLIN) while (read(fd_kbd,   &ev, sizeof(ev)) > 0) handle_kbd(&ev);
-        if (fds[1].revents & POLLIN) while (read(fd_mouse, &ev, sizeof(ev)) > 0) handle_mouse(&ev);
-        if (fds[2].revents & POLLIN) while (read(fd_prof,  &ev, sizeof(ev)) > 0) handle_prof(&ev);
-        if (fds[3].revents & POLLIN) {
+        if (fds[0].revents & POLLIN) while (read(fd_kbd,  &ev, sizeof(ev)) > 0) handle_kbd(&ev);
+        if (fds[1].revents & POLLIN) while (read(fd_prof, &ev, sizeof(ev)) > 0) handle_prof(&ev);
+        if (fds[2].revents & POLLIN) {
             char ibuf[512]; while (read(fd_ino, ibuf, sizeof(ibuf)) > 0);
             printf("Config changed, reloading...\n");
             stop_all_macros();
             config_load(&cfg, cfg_path);
             cur_profile = 0;
-            led_apply(active_profile(), cur_profile);
-    dpi_apply(active_profile(), cur_profile);
+            write_all_profiles();
         }
     }
 

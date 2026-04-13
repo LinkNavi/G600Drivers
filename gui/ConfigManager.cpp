@@ -5,6 +5,7 @@
 #include <QStandardPaths>
 #include <QDebug>
 #include <QTimer>
+
 static const QStringList GKEY_NAMES = {
     "G9","G10","G11","G12","G13","G14","G15","G16","G17","G18","G19","G20"
 };
@@ -44,6 +45,10 @@ QVariantMap ConfigManager::defaultProfile(const QString &name) const {
     p["dpi_shift"]    = 0;
     p["dpi_default"]  = 1;
     p["dpi_enabled"]  = false;
+    p["onboard_ring"]    = "BTN_MIDDLE";
+    p["onboard_g7"]      = "BTN_MIDDLE";
+    p["onboard_g8"]      = "PROFILE_NEXT";
+    p["onboard_enabled"] = false;
 
     QVariantMap bindings;
     QStringList fkeys = {"F13","F14","F15","F16","F17","F18","F19","F20","F21","F22","F23","F24"};
@@ -64,7 +69,7 @@ QVariantMap ConfigManager::defaultProfile(const QString &name) const {
 void ConfigManager::load() {
     QFile f(m_path);
     if (!f.exists()) {
-        QVariantMap p1 = defaultProfile("default");  p1["abs_misc"] = 32;
+        QVariantMap p1 = defaultProfile("profile1"); p1["abs_misc"] = 32;
         QVariantMap p2 = defaultProfile("profile2"); p2["abs_misc"] = 64;
         QVariantMap p3 = defaultProfile("profile3"); p3["abs_misc"] = 128;
         m_profiles = { p1, p2, p3 };
@@ -115,6 +120,9 @@ void ConfigManager::load() {
         if (key == "dpi_4")        { cur["dpi_4"] = val.toInt(); cur["dpi_enabled"] = true; continue; }
         if (key == "dpi_shift")    { cur["dpi_shift"] = val.toInt(); cur["dpi_enabled"] = true; continue; }
         if (key == "dpi_default")  { cur["dpi_default"] = val.toInt(); cur["dpi_enabled"] = true; continue; }
+        if (key == "onboard_ring")    { cur["onboard_ring"] = val; cur["onboard_enabled"] = true; continue; }
+        if (key == "onboard_g7")      { cur["onboard_g7"]   = val; cur["onboard_enabled"] = true; continue; }
+        if (key == "onboard_g8")      { cur["onboard_g8"]   = val; cur["onboard_enabled"] = true; continue; }
         if (key == "abs_misc")     { cur["abs_misc"] = val.toInt(); continue; }
         if (key == "led_r")        { cur["led_r"] = val.toInt(); cur["led_enabled"] = true; continue; }
         if (key == "led_g")        { cur["led_g"] = val.toInt(); cur["led_enabled"] = true; continue; }
@@ -129,8 +137,15 @@ void ConfigManager::load() {
     }
     finishProfile();
 
-    if (m_profiles.isEmpty())
-        m_profiles = { defaultProfile("default") };
+    // Always ensure exactly 3 profiles
+    while (m_profiles.size() < 3) {
+        int idx = m_profiles.size();
+        QVariantMap p = defaultProfile(QString("profile%1").arg(idx + 1));
+        QList<int> absMiscVals = {32, 64, 128};
+        p["abs_misc"] = absMiscVals[idx];
+        m_profiles.append(p);
+    }
+    if (m_profiles.size() > 3) m_profiles = m_profiles.mid(0, 3);
 
     f.close();
 
@@ -156,6 +171,12 @@ void ConfigManager::save() {
         out << "[" << p["name"].toString() << "]\n";
         out << "abs_misc = " << p["abs_misc"].toInt() << "\n";
 
+        if (p["onboard_enabled"].toBool() || true) {  // always write onboard
+            out << "ONBOARD_RING = " << p["onboard_ring"].toString() << "\n";
+            out << "ONBOARD_G7   = " << p["onboard_g7"].toString()   << "\n";
+            out << "ONBOARD_G8   = " << p["onboard_g8"].toString()   << "\n";
+            out << "\n";
+        }
         if (p["dpi_enabled"].toBool()) {
             out << "dpi_1 = "       << p["dpi_1"].toInt()       << "\n";
             out << "dpi_2 = "       << p["dpi_2"].toInt()       << "\n";
@@ -287,5 +308,22 @@ QVariantMap ConfigManager::getDpi(int profileIdx) const {
         {"d3", p["dpi_3"]}, {"d4", p["dpi_4"]},
         {"def", p["dpi_default"]}, {"shift", p["dpi_shift"]},
         {"enabled", p["dpi_enabled"]}
+    };
+}
+
+void ConfigManager::setOnboard(int profileIdx, const QString &ring, const QString &g7, const QString &g8) {
+    if (profileIdx < 0 || profileIdx >= m_profiles.size()) return;
+    QVariantMap p = m_profiles[profileIdx].toMap();
+    p["onboard_ring"] = ring; p["onboard_g7"] = g7; p["onboard_g8"] = g8;
+    p["onboard_enabled"] = true;
+    m_profiles[profileIdx] = p;
+    emit profilesChanged();
+}
+
+QVariantMap ConfigManager::getOnboard(int profileIdx) const {
+    if (profileIdx < 0 || profileIdx >= m_profiles.size()) return {};
+    QVariantMap p = m_profiles[profileIdx].toMap();
+    return {
+        {"ring", p["onboard_ring"]}, {"g7", p["onboard_g7"]}, {"g8", p["onboard_g8"]}
     };
 }

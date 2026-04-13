@@ -8,7 +8,9 @@ project('g600d', ['c', 'cpp'],
 )
 
 src_main = files('daemon/main.c')
+
 src_led_test = files('tests/led_test.c')
+src_dump_test = files('tests/dump_profile.c')
 
 qt6 = import('qt6')
 qt6_dep = dependency('qt6', modules: ['Core', 'Quick', 'Qml', 'Gui', 'Widgets'])
@@ -29,7 +31,9 @@ executable('g600d', src_main,
   install_dir: get_option('bindir'),
 )
 
+
 executable('led_test', src_led_test)
+executable('dump_test', src_dump_test)
 
 executable('g600-config', [src_gui_cpp, gui_moc, gui_qrc],
   install: true,
