@@ -945,8 +945,7 @@ int main(void) {
     if (access(cfg_path, F_OK) != 0) config_write_default(cfg_path);
     config_load(&cfg, cfg_path);
 
-    char dev_kbd[64]={0}, dev_mouse[64]={0}, dev_prof[64]={0}, dev_hidraw[64]={0};
-    printf("Scanning for G600 devices...\n");
+   char dev_kbd[64]={0}, dev_mouse[64]={0}, dev_prof[64]={0}, dev_hidraw[128]={0};    printf("Scanning for G600 devices...\n");
     if (!g600_find_devices(dev_kbd, dev_mouse, dev_prof, sizeof(dev_kbd))) {
         fprintf(stderr, "Could not find all G600 event devices\n");
         return 1;
