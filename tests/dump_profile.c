@@ -26,6 +26,8 @@ int main(void) {
             printf("  <-- button %d key", (i - 31) / 3);
         printf("\n");
     }
+printf("Read back: buf[1-5] = %02x %02x %02x %02x %02x\n",
+       buf[1], buf[2], buf[3], buf[4], buf[5]);
     close(fd);
     return 0;
 }

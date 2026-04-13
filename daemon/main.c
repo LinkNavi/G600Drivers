@@ -18,7 +18,6 @@
 #include <strings.h>
 
 /* ── devices ── */
-/* Stable symlinks for hidraw — interface 1 has the profile feature reports */
 #define DEV_HIDRAW_SYMLINK "/dev/input/by-id/usb-Logitech_Gaming_Mouse_G600_4FD9CE8DE3650017-if01-hidraw"
 #define G600_NAME          "Logitech Gaming Mouse G600"
 #define G600_VID           0x046d
@@ -29,11 +28,10 @@
 #define CFG_FILE "/.config/g600d/g600d.conf"
 
 /* ── limits ── */
-#define MAX_PROFILES   3
-#define NUM_GKEYS     12
-#define NUM_MKEYS      5
+#define MAX_PROFILES    3
+#define NUM_GKEYS      12
+#define NUM_MKEYS       5
 #define MAX_MACRO_STEPS 64
-
 
 /* ── Special action codes ── */
 #define SPECIAL_BASE         0x10000
@@ -87,7 +85,8 @@ static const KeyEntry KEY_TABLE[] = {
     {"U",KEY_U},{"V",KEY_V},{"W",KEY_W},{"X",KEY_X},{"Y",KEY_Y},{"Z",KEY_Z},
     {"0",KEY_0},{"1",KEY_1},{"2",KEY_2},{"3",KEY_3},{"4",KEY_4},
     {"5",KEY_5},{"6",KEY_6},{"7",KEY_7},{"8",KEY_8},{"9",KEY_9},
-    {"BTN_LEFT",BTN_LEFT},{"BTN_RIGHT",BTN_RIGHT},{"BTN_MIDDLE",BTN_MIDDLE},{"BTN_SIDE",BTN_SIDE},{"BTN_EXTRA",BTN_EXTRA},
+    {"BTN_LEFT",BTN_LEFT},{"BTN_RIGHT",BTN_RIGHT},{"BTN_MIDDLE",BTN_MIDDLE},
+    {"BTN_SIDE",BTN_SIDE},{"BTN_EXTRA",BTN_EXTRA},
     {"DPI_SHIFT",    SPECIAL_DPI_SHIFT},
     {"PROFILE_1",    SPECIAL_PROFILE_1},
     {"PROFILE_2",    SPECIAL_PROFILE_2},
@@ -99,7 +98,6 @@ static const KeyEntry KEY_TABLE[] = {
     {"NONE", 0},
     {NULL, -1}
 };
-
 
 static int keyname_to_code(const char *name) {
     char upper[64]; size_t i;
@@ -121,16 +119,14 @@ typedef enum { HOLD_ONCE, HOLD_REPEAT, HOLD_TOGGLE } MacroHold;
 #define MAX_COMBO_KEYS 4
 typedef struct {
     StepType type;
-    int      keys[MAX_COMBO_KEYS]; /* for STEP_KEYS */
+    int      keys[MAX_COMBO_KEYS];
     int      nkeys;
-    int      delay_ms;             /* for STEP_DELAY */
+    int      delay_ms;
 } MacroStep;
 
 typedef struct {
     int          is_macro;
-    /* rebind (is_macro=0) */
     int          keycode;
-    /* macro (is_macro=1) */
     MacroTrigger trigger;
     MacroHold    hold;
     MacroStep    steps[MAX_MACRO_STEPS];
@@ -146,7 +142,6 @@ typedef struct {
 #define HID_MOD_RALT   0x40
 #define HID_MOD_RMETA  0x80
 
-/* ── Linux keycode → HID keycode ────────────────────────────────────── */
 typedef struct { int linux_code; uint8_t hid_code; uint8_t hid_mod; } HIDEntry;
 static const HIDEntry HID_TABLE[] = {
     {KEY_A,0x04,0},{KEY_B,0x05,0},{KEY_C,0x06,0},{KEY_D,0x07,0},
@@ -178,7 +173,6 @@ static const HIDEntry HID_TABLE[] = {
     {KEY_VOLUMEUP,0xe9,0},{KEY_VOLUMEDOWN,0xea,0},{KEY_MUTE,0xe2,0},
     {KEY_PLAYPAUSE,0xcd,0},{KEY_NEXTSONG,0xb5,0},{KEY_PREVIOUSSONG,0xb6,0},
     {KEY_STOPCD,0xb7,0},
-    /* modifiers — returned as mod flags with key=0x00 */
     {KEY_LEFTCTRL,  0x00, HID_MOD_LCTRL},
     {KEY_LEFTSHIFT, 0x00, HID_MOD_LSHIFT},
     {KEY_LEFTALT,   0x00, HID_MOD_LALT},
@@ -190,7 +184,6 @@ static const HIDEntry HID_TABLE[] = {
     {0, 0, 0}
 };
 
-/* Convert a single linux keycode to HID keycode + modifier flags */
 static int linux_to_hid(int linux_code, uint8_t *hid_key, uint8_t *hid_mod) {
     for (const HIDEntry *e = HID_TABLE; e->linux_code; e++) {
         if (e->linux_code == linux_code) {
@@ -202,38 +195,8 @@ static int linux_to_hid(int linux_code, uint8_t *hid_key, uint8_t *hid_mod) {
     return -1;
 }
 
-/* Convert a Binding (single key rebind only) to a G600Button struct.
- * Returns 0 on success, -1 if not representable in onboard flash. */
-static int binding_to_g600btn(const Binding *b, uint8_t *code, uint8_t *mod, uint8_t *key) {
-    if (b->is_macro) return -1; /* macros can't be stored onboard */
-    int kc = b->keycode;
-
-    /* special virtual keycodes */
-    if (kc == SPECIAL_DPI_UP)       { *code=0x11; *mod=0; *key=0; return 0; }
-    if (kc == SPECIAL_DPI_DOWN)     { *code=0x12; *mod=0; *key=0; return 0; }
-    if (kc == SPECIAL_PROFILE_NEXT) { *code=0x14; *mod=0; *key=0; return 0; }
-    if (kc == SPECIAL_PROFILE_PREV) { *code=0x14; *mod=0; *key=0; return 0; } /* no prev on G600 */
-    if (kc == 0) { *code=0; *mod=0; *key=0; return 0; } /* NONE */
-
-    /* mouse buttons */
-    if (kc == BTN_LEFT)   { *code=0; *mod=1; *key=0; return 0; }
-    if (kc == BTN_RIGHT)  { *code=0; *mod=2; *key=0; return 0; }
-    if (kc == BTN_MIDDLE) { *code=0; *mod=3; *key=0; return 0; }
-    if (kc == BTN_SIDE)   { *code=0; *mod=4; *key=0; return 0; }
-    if (kc == BTN_EXTRA)  { *code=0; *mod=5; *key=0; return 0; }
-
-    /* keyboard key */
-    uint8_t hk=0, hm=0;
-    if (linux_to_hid(kc, &hk, &hm) == 0) {
-        *code=0; *mod=hm; *key=hk; return 0;
-    }
-
-    return -1;
-}
-
-
 /* ──────────────────────────────────────────────
-   Profile
+   Profile structures
    ────────────────────────────────────────────── */
 static const int SRC_GKEYS[NUM_GKEYS] = {
     KEY_1,KEY_2,KEY_3,KEY_4,KEY_5,KEY_6,
@@ -246,23 +209,21 @@ static const int SRC_MKEYS[NUM_MKEYS] = { BTN_LEFT, BTN_RIGHT, BTN_MIDDLE, BTN_S
 static const char *MKEY_NAMES[NUM_MKEYS] = { "BTN_LEFT","BTN_RIGHT","MIDDLE","TILT_LEFT","TILT_RIGHT" };
 
 typedef struct {
-    char    name[64];
-    int     abs_misc_val;
-    Binding gkeys_normal[NUM_GKEYS];
-    Binding gkeys_gshift[NUM_GKEYS];
-    Binding mkeys[NUM_MKEYS];
-    uint8_t led_r, led_g, led_b;
-    uint8_t led_effect, led_duration;
-    int     led_enabled;
-    /* DPI */
-    uint16_t dpi[4];        /* slots 1-4, 0=disabled */
-    uint16_t dpi_shift;     /* G-Shift DPI, 0=disabled */
-    uint8_t  dpi_default;   /* 1-4 */
+    char     name[64];
+    int      abs_misc_val;
+    Binding  gkeys_normal[NUM_GKEYS];
+    Binding  gkeys_gshift[NUM_GKEYS];
+    Binding  mkeys[NUM_MKEYS];
+    uint8_t  led_r, led_g, led_b;
+    uint8_t  led_effect, led_duration;
+    int      led_enabled;
+    uint16_t dpi[4];
+    uint16_t dpi_shift;
+    uint8_t  dpi_default;
     int      dpi_enabled;
-    /* onboard button remaps (written to HID flash) */
-    Binding  onboard_ring;   /* button index 2 */
-    Binding  onboard_g7;     /* button index 6 */
-    Binding  onboard_g8;     /* button index 7 */
+    Binding  onboard_ring;
+    Binding  onboard_g7;
+    Binding  onboard_g8;
     int      onboard_enabled;
 } Profile;
 
@@ -271,6 +232,24 @@ typedef struct {
     int     num_profiles;
 } Config;
 
+/* ──────────────────────────────────────────────
+   Globals
+   ────────────────────────────────────────────── */
+static volatile int running = 1;
+static Config       cfg;
+static int          cur_profile = 0;
+static int          cur_dpi_slot = 0;
+static int          gshift = 0;
+static int          hidraw_fd = -1;
+static int          uinput_fd = -1;
+static pthread_mutex_t uinput_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void sig_handler(int s) { (void)s; running = 0; }
+static Profile *active_profile(void) { return &cfg.profiles[cur_profile]; }
+
+/* ──────────────────────────────────────────────
+   Binding helpers
+   ────────────────────────────────────────────── */
 static void binding_set_key(Binding *b, int code) {
     b->is_macro = 0;
     b->keycode  = code;
@@ -300,17 +279,33 @@ static void config_defaults(Config *cfg) {
     profile_defaults(&cfg->profiles[0]);
 }
 
+static int binding_to_g600btn(const Binding *b, uint8_t *code, uint8_t *mod, uint8_t *key) {
+    if (b->is_macro) return -1;
+    int kc = b->keycode;
+    if (kc == SPECIAL_DPI_SHIFT)    { *code=0x17; *mod=0; *key=0; return 0; }
+    if (kc == SPECIAL_DPI_UP)       { *code=0x11; *mod=0; *key=0; return 0; }
+    if (kc == SPECIAL_DPI_DOWN)     { *code=0x12; *mod=0; *key=0; return 0; }
+    if (kc == SPECIAL_PROFILE_NEXT) { *code=0x14; *mod=0; *key=0; return 0; }
+    if (kc == SPECIAL_PROFILE_PREV) { *code=0x14; *mod=0; *key=0; return 0; }
+    if (kc == 0) { *code=0; *mod=0; *key=0; return 0; }
+    if (kc == BTN_LEFT)   { *code=0; *mod=1; *key=0; return 0; }
+    if (kc == BTN_RIGHT)  { *code=0; *mod=2; *key=0; return 0; }
+    if (kc == BTN_MIDDLE) { *code=0; *mod=3; *key=0; return 0; }
+    if (kc == BTN_SIDE)   { *code=0; *mod=4; *key=0; return 0; }
+    if (kc == BTN_EXTRA)  { *code=0; *mod=5; *key=0; return 0; }
+    uint8_t hk=0, hm=0;
+    if (linux_to_hid(kc, &hk, &hm) == 0) { *code=0; *mod=hm; *key=hk; return 0; }
+    return -1;
+}
+
 /* ──────────────────────────────────────────────
    Macro parser
    ────────────────────────────────────────────── */
-
-/* parse "LEFTCTRL+LEFTSHIFT+C" into keys array, return nkeys */
 static int parse_combo(const char *s, int keys[MAX_COMBO_KEYS]) {
     int n = 0;
     char buf[256]; strncpy(buf, s, sizeof(buf)-1); buf[sizeof(buf)-1] = '\0';
     char *tok = strtok(buf, "+");
     while (tok && n < MAX_COMBO_KEYS) {
-        /* trim */
         while (*tok == ' ') tok++;
         char *end = tok + strlen(tok) - 1;
         while (end > tok && *end == ' ') *end-- = '\0';
@@ -322,30 +317,17 @@ static int parse_combo(const char *s, int keys[MAX_COMBO_KEYS]) {
     return n;
 }
 
-/*
- * Parse: macro:<trigger>:<hold>: step, step, ...
- * steps: "LEFTCTRL+C"  or  "50ms"
- */
 static int parse_macro_binding(Binding *b, const char *val) {
-    /* val points past "macro:" */
     char buf[1024]; strncpy(buf, val, sizeof(buf)-1); buf[sizeof(buf)-1] = '\0';
-
-    /* trigger */
     char *p = buf;
     if (strncasecmp(p, "press:", 6) == 0)        { b->trigger = TRIG_PRESS;   p += 6; }
     else if (strncasecmp(p, "release:", 8) == 0) { b->trigger = TRIG_RELEASE; p += 8; }
     else { fprintf(stderr, "Macro: expected press:|release:\n"); return -1; }
-
-    /* hold */
     if (strncasecmp(p, "once:", 5) == 0)         { b->hold = HOLD_ONCE;   p += 5; }
     else if (strncasecmp(p, "repeat:", 7) == 0)  { b->hold = HOLD_REPEAT; p += 7; }
     else if (strncasecmp(p, "toggle:", 7) == 0)  { b->hold = HOLD_TOGGLE; p += 7; }
     else { fprintf(stderr, "Macro: expected once:|repeat:|toggle:\n"); return -1; }
-
-    /* skip spaces */
     while (*p == ' ') p++;
-
-    /* parse comma-separated steps */
     b->nsteps = 0;
     char *saveptr;
     char *tok = strtok_r(p, ",", &saveptr);
@@ -353,10 +335,7 @@ static int parse_macro_binding(Binding *b, const char *val) {
         while (*tok == ' ') tok++;
         char *end = tok + strlen(tok) - 1;
         while (end > tok && isspace((unsigned char)*end)) *end-- = '\0';
-
         MacroStep *step = &b->steps[b->nsteps];
-
-        /* delay? e.g. "50ms" */
         char *ms = strstr(tok, "ms"); if (!ms) ms = strstr(tok, "MS");
         if (ms) {
             step->type     = STEP_DELAY;
@@ -370,19 +349,14 @@ static int parse_macro_binding(Binding *b, const char *val) {
         b->nsteps++;
         tok = strtok_r(NULL, ",", &saveptr);
     }
-
     b->is_macro = 1;
     return 0;
 }
 
 static int parse_binding(Binding *b, const char *val) {
-    /* trim leading spaces */
     while (*val == ' ') val++;
-
     if (strncasecmp(val, "macro:", 6) == 0)
         return parse_macro_binding(b, val + 6);
-
-    /* plain key */
     int code = keyname_to_code(val);
     if (code < 0) { fprintf(stderr, "Unknown key: %s\n", val); return -1; }
     binding_set_key(b, code);
@@ -413,15 +387,12 @@ static int parse_led_effect(const char *val) {
 static void config_load(Config *cfg, const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) { fprintf(stderr, "Config not found, using defaults\n"); config_defaults(cfg); return; }
-
     cfg->num_profiles = 0;
     char line[1024];
     Profile *cur = NULL;
-
     while (fgets(line, sizeof(line), f)) {
         char *hash = strchr(line, '#'); if (hash) *hash = '\0';
         trim(line); if (!line[0]) continue;
-
         if (line[0] == '[') {
             char *end = strchr(line, ']'); if (!end) continue; *end = '\0';
             if (cfg->num_profiles >= MAX_PROFILES) continue;
@@ -432,43 +403,32 @@ static void config_load(Config *cfg, const char *path) {
             continue;
         }
         if (!cur) continue;
-
         char *eq = strchr(line, '='); if (!eq) continue; *eq = '\0';
         char key[128], val[1024];
         strncpy(key, line, sizeof(key)-1); trim(key);
         strncpy(val, eq+1, sizeof(val)-1); trim(val);
-
-        if (strcasecmp(key, "abs_misc") == 0) { cur->abs_misc_val = atoi(val); goto next; }
-        if (strcasecmp(key, "led_r") == 0)    { cur->led_r = (uint8_t)atoi(val); cur->led_enabled = 1; goto next; }
-        if (strcasecmp(key, "led_g") == 0)    { cur->led_g = (uint8_t)atoi(val); cur->led_enabled = 1; goto next; }
-        if (strcasecmp(key, "led_b") == 0)    { cur->led_b = (uint8_t)atoi(val); cur->led_enabled = 1; goto next; }
-        if (strcasecmp(key, "led_effect") == 0) {
-            int e = parse_led_effect(val); if (e >= 0) { cur->led_effect = e; cur->led_enabled = 1; } goto next;
-        }
-        if (strcasecmp(key, "dpi_1") == 0)       { cur->dpi[0] = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
-        if (strcasecmp(key, "dpi_2") == 0)       { cur->dpi[1] = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
-        if (strcasecmp(key, "dpi_3") == 0)       { cur->dpi[2] = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
-        if (strcasecmp(key, "dpi_4") == 0)       { cur->dpi[3] = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
-        if (strcasecmp(key, "dpi_shift") == 0)   { cur->dpi_shift   = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
-        if (strcasecmp(key, "dpi_default") == 0) { cur->dpi_default  = (uint8_t)atoi(val); cur->dpi_enabled = 1; goto next; }
-        if (strcasecmp(key, "led_duration") == 0) {
-            int d = atoi(val); cur->led_duration = (uint8_t)(d<1?1:d>15?15:d); cur->led_enabled = 1; goto next;
-        }
-
-        if (strcasecmp(key, "ONBOARD_RING") == 0) { parse_binding(&cur->onboard_ring, val); cur->onboard_enabled = 1; goto next; }
-        if (strcasecmp(key, "ONBOARD_G7")   == 0) { parse_binding(&cur->onboard_g7,   val); cur->onboard_enabled = 1; goto next; }
-        if (strcasecmp(key, "ONBOARD_G8")   == 0) { parse_binding(&cur->onboard_g8,   val); cur->onboard_enabled = 1; goto next; }
-
-        /* G-keys */
+        if (strcasecmp(key, "abs_misc") == 0)     { cur->abs_misc_val = atoi(val); goto next; }
+        if (strcasecmp(key, "led_r") == 0)         { cur->led_r = (uint8_t)atoi(val); cur->led_enabled = 1; goto next; }
+        if (strcasecmp(key, "led_g") == 0)         { cur->led_g = (uint8_t)atoi(val); cur->led_enabled = 1; goto next; }
+        if (strcasecmp(key, "led_b") == 0)         { cur->led_b = (uint8_t)atoi(val); cur->led_enabled = 1; goto next; }
+        if (strcasecmp(key, "led_effect") == 0)    { int e = parse_led_effect(val); if (e >= 0) { cur->led_effect = e; cur->led_enabled = 1; } goto next; }
+        if (strcasecmp(key, "led_duration") == 0)  { int d = atoi(val); cur->led_duration = (uint8_t)(d<1?1:d>15?15:d); cur->led_enabled = 1; goto next; }
+        if (strcasecmp(key, "dpi_1") == 0)         { cur->dpi[0] = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
+        if (strcasecmp(key, "dpi_2") == 0)         { cur->dpi[1] = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
+        if (strcasecmp(key, "dpi_3") == 0)         { cur->dpi[2] = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
+        if (strcasecmp(key, "dpi_4") == 0)         { cur->dpi[3] = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
+        if (strcasecmp(key, "dpi_shift") == 0)     { cur->dpi_shift   = (uint16_t)atoi(val); cur->dpi_enabled = 1; goto next; }
+        if (strcasecmp(key, "dpi_default") == 0)   { cur->dpi_default = (uint8_t)atoi(val);  cur->dpi_enabled = 1; goto next; }
+        if (strcasecmp(key, "ONBOARD_RING") == 0)  { parse_binding(&cur->onboard_ring, val); cur->onboard_enabled = 1; goto next; }
+        if (strcasecmp(key, "ONBOARD_G7") == 0)    { parse_binding(&cur->onboard_g7,   val); cur->onboard_enabled = 1; goto next; }
+        if (strcasecmp(key, "ONBOARD_G8") == 0)    { parse_binding(&cur->onboard_g8,   val); cur->onboard_enabled = 1; goto next; }
         for (int i = 0; i < NUM_GKEYS; i++) {
-            if (strcasecmp(key, GKEY_NAMES[i]) == 0)         { parse_binding(&cur->gkeys_normal[i], val); goto next; }
+            if (strcasecmp(key, GKEY_NAMES[i]) == 0) { parse_binding(&cur->gkeys_normal[i], val); goto next; }
             char sh[32]; snprintf(sh, sizeof(sh), "SHIFT_%s", GKEY_NAMES[i]);
-            if (strcasecmp(key, sh) == 0)                    { parse_binding(&cur->gkeys_gshift[i], val); goto next; }
+            if (strcasecmp(key, sh) == 0)             { parse_binding(&cur->gkeys_gshift[i], val); goto next; }
         }
-        /* mouse keys */
         for (int i = 0; i < NUM_MKEYS; i++)
             if (strcasecmp(key, MKEY_NAMES[i]) == 0) { parse_binding(&cur->mkeys[i], val); goto next; }
-
         fprintf(stderr, "Unknown config key: %s\n", key);
         next:;
     }
@@ -480,32 +440,21 @@ static void config_load(Config *cfg, const char *path) {
 static void config_write_default(const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) { perror("fopen config"); return; }
-
     const char *profile_names[3] = {"profile1", "profile2", "profile3"};
     const int   abs_misc_vals[3] = {32, 64, 128};
-
     fprintf(f,
         "# G600 Daemon Config — 3 profiles matching mouse onboard slots\n"
-        "# Profile 1 = hardware slot 1 (ABS_MISC=32)\n"
-        "# Profile 2 = hardware slot 2 (ABS_MISC=64)\n"
-        "# Profile 3 = hardware slot 3 (ABS_MISC=128)\n"
-        "# G8 cycles between them on the mouse.\n\n"
         "# Rebind:  G9 = F13\n"
         "# Macro:   G9 = macro:<press|release>:<once|repeat|toggle>: KEY, Nms, KEY\n"
         "# Onboard: ONBOARD_G7/G8/RING = key (stored in mouse flash)\n"
         "# Special: PROFILE_NEXT, DPI_UP, DPI_DOWN, DPI_SHIFT\n\n"
     );
-
     for (int p = 0; p < 3; p++) {
         fprintf(f, "[%s]\n", profile_names[p]);
         fprintf(f, "abs_misc = %d\n\n", abs_misc_vals[p]);
         fprintf(f, "# LED\n#led_r = 255\n#led_g = 255\n#led_b = 255\n#led_effect = solid\n#led_duration = 4\n\n");
         fprintf(f, "# DPI\n#dpi_1 = 1200\n#dpi_2 = 0\n#dpi_3 = 0\n#dpi_4 = 0\n#dpi_default = 1\n#dpi_shift = 0\n\n");
-        fprintf(f, "# Onboard buttons (stored in mouse flash)\n");
-        fprintf(f, "ONBOARD_RING = BTN_MIDDLE\n");
-        fprintf(f, "ONBOARD_G7   = BTN_MIDDLE\n");
-        fprintf(f, "ONBOARD_G8   = PROFILE_NEXT\n\n");
-        fprintf(f, "# G-keys\n");
+        fprintf(f, "ONBOARD_RING = BTN_MIDDLE\nONBOARD_G7   = BTN_MIDDLE\nONBOARD_G8   = PROFILE_NEXT\n\n");
         const char *gnames[] = {"G9","G10","G11","G12","G13","G14","G15","G16","G17","G18","G19","G20"};
         const char *fn[]     = {"F13","F14","F15","F16","F17","F18","F19","F20","F21","F22","F23","F24"};
         const char *sfn[]    = {"F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12"};
@@ -514,7 +463,6 @@ static void config_write_default(const char *path) {
         for (int i = 0; i < 12; i++) fprintf(f, "SHIFT_%s = %s\n", gnames[i], sfn[i]);
         fprintf(f, "\nMIDDLE     = BTN_MIDDLE\nTILT_LEFT  = BTN_SIDE\nTILT_RIGHT = BTN_EXTRA\n\n");
     }
-
     fclose(f);
     printf("Wrote default config to %s\n", path);
 }
@@ -522,9 +470,6 @@ static void config_write_default(const char *path) {
 /* ──────────────────────────────────────────────
    uinput
    ────────────────────────────────────────────── */
-static int uinput_fd = -1;
-static pthread_mutex_t uinput_lock = PTHREAD_MUTEX_INITIALIZER;
-
 static void emit_locked(int type, int code, int val) {
     struct input_event ev = {0};
     ev.type = type; ev.code = code; ev.value = val;
@@ -542,8 +487,14 @@ static int uinput_setup(void) {
     if (uinput_fd < 0) { perror("open /dev/uinput"); return -1; }
     ioctl(uinput_fd, UI_SET_EVBIT, EV_KEY);
     ioctl(uinput_fd, UI_SET_EVBIT, EV_SYN);
+    /* EV_REL needed so compositors treat this device as a pointer and
+       accept BTN_LEFT/RIGHT/MIDDLE from it */
+    ioctl(uinput_fd, UI_SET_EVBIT, EV_REL);
+    ioctl(uinput_fd, UI_SET_RELBIT, REL_X);
+    ioctl(uinput_fd, UI_SET_RELBIT, REL_Y);
+    ioctl(uinput_fd, UI_SET_RELBIT, REL_WHEEL);
     for (const KeyEntry *e = KEY_TABLE; e->name; e++)
-        if (e->code > 0) ioctl(uinput_fd, UI_SET_KEYBIT, e->code);
+        if (e->code > 0 && e->code < SPECIAL_BASE) ioctl(uinput_fd, UI_SET_KEYBIT, e->code);
     ioctl(uinput_fd, UI_SET_KEYBIT, BTN_MIDDLE);
     ioctl(uinput_fd, UI_SET_KEYBIT, BTN_SIDE);
     ioctl(uinput_fd, UI_SET_KEYBIT, BTN_EXTRA);
@@ -560,8 +511,6 @@ static int uinput_setup(void) {
 /* ──────────────────────────────────────────────
    Macro execution
    ────────────────────────────────────────────── */
-
-/* fire a single step — press all keys in order then release in reverse */
 static void exec_step(const MacroStep *step) {
     if (step->type == STEP_DELAY) {
         struct timespec ts = { step->delay_ms / 1000, (step->delay_ms % 1000) * 1000000L };
@@ -580,39 +529,33 @@ static void exec_sequence(const Binding *b) {
     for (int i = 0; i < b->nsteps; i++) exec_step(&b->steps[i]);
 }
 
-/* per-button macro thread state */
 typedef struct {
-    Binding  binding;   /* copy so config reload doesn't corrupt */
+    Binding      binding;
     volatile int running;
-    volatile int held;  /* physical button still held? */
-    pthread_t tid;
-    int       active;   /* slot in use */
+    volatile int held;
+    pthread_t    tid;
+    int          active;
 } MacroThread;
 
 #define MAX_MACRO_THREADS (NUM_GKEYS * 2 + NUM_MKEYS)
-static MacroThread macro_threads[MAX_MACRO_THREADS];
+static MacroThread     macro_threads[MAX_MACRO_THREADS];
 static pthread_mutex_t mt_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *macro_thread_fn(void *arg) {
     MacroThread *mt = arg;
     const Binding *b = &mt->binding;
-
     if (b->hold == HOLD_ONCE) {
         exec_sequence(b);
     } else if (b->hold == HOLD_REPEAT) {
         while (mt->held && mt->running) exec_sequence(b);
     } else if (b->hold == HOLD_TOGGLE) {
-        /* toggle: keep running until mt->running is cleared by a second press */
         while (mt->running) exec_sequence(b);
     }
-
     pthread_mutex_lock(&mt_lock);
     mt->active = 0;
     pthread_mutex_unlock(&mt_lock);
     return NULL;
 }
-
-/* find existing active thread for this binding pointer identity (by slot index) */
 
 static MacroThread *alloc_thread(void) {
     for (int i = 0; i < MAX_MACRO_THREADS; i++)
@@ -620,14 +563,8 @@ static MacroThread *alloc_thread(void) {
     return NULL;
 }
 
-/*
- * slot: unique identifier per button (e.g. index into gkeys array + offset)
- * We abuse binding->keycode to store the slot when is_macro=1.
- */
 static void macro_on_press(const Binding *b, int slot) {
     pthread_mutex_lock(&mt_lock);
-
-    /* check if toggle thread already running → stop it */
     for (int i = 0; i < MAX_MACRO_THREADS; i++) {
         MacroThread *mt = &macro_threads[i];
         if (mt->active && mt->binding.keycode == slot) {
@@ -637,23 +574,17 @@ static void macro_on_press(const Binding *b, int slot) {
                 pthread_join(mt->tid, NULL);
                 return;
             }
-            /* for repeat, mark released */
             mt->held = 0;
             pthread_mutex_unlock(&mt_lock);
             return;
         }
     }
-
     if (b->trigger != TRIG_PRESS) { pthread_mutex_unlock(&mt_lock); return; }
-
     MacroThread *mt = alloc_thread();
     if (!mt) { pthread_mutex_unlock(&mt_lock); fprintf(stderr, "No macro thread slots\n"); return; }
-
     mt->binding = *b;
-    mt->binding.keycode = slot; /* reuse keycode field as slot id */
-    mt->running = 1;
-    mt->held    = 1;
-    mt->active  = 1;
+    mt->binding.keycode = slot;
+    mt->running = 1; mt->held = 1; mt->active = 1;
     pthread_mutex_unlock(&mt_lock);
     pthread_create(&mt->tid, NULL, macro_thread_fn, mt);
     pthread_detach(mt->tid);
@@ -661,8 +592,6 @@ static void macro_on_press(const Binding *b, int slot) {
 
 static void macro_on_release(const Binding *b, int slot) {
     pthread_mutex_lock(&mt_lock);
-
-    /* signal repeat thread to stop */
     for (int i = 0; i < MAX_MACRO_THREADS; i++) {
         MacroThread *mt = &macro_threads[i];
         if (mt->active && mt->binding.keycode == slot && mt->binding.hold == HOLD_REPEAT) {
@@ -671,10 +600,7 @@ static void macro_on_release(const Binding *b, int slot) {
             return;
         }
     }
-
     if (b->trigger != TRIG_RELEASE) { pthread_mutex_unlock(&mt_lock); return; }
-
-    /* fire on release */
     MacroThread *mt = alloc_thread();
     if (!mt) { pthread_mutex_unlock(&mt_lock); return; }
     mt->binding = *b;
@@ -693,126 +619,160 @@ static void stop_all_macros(void) {
 }
 
 /* ──────────────────────────────────────────────
+   HID / LED / DPI
+   ────────────────────────────────────────────── */
+static uint8_t profile_report_id(int idx) {
+    switch (idx % 3) { case 0: return REPORT_ID_P0; case 1: return REPORT_ID_P1; default: return REPORT_ID_P2; }
+}
+
+static void set_active_resolution(int slot) {
+    if (hidraw_fd < 0) return;
+    /* matches logitech_g600_set_current_resolution() in kernel driver */
+    uint8_t buf[4] = {0xF0, (uint8_t)(0x40 | (slot << 1)), 0x00, 0x00};
+    if (ioctl(hidraw_fd, HIDIOCSFEATURE(4), buf) < 0)
+        perror("HIDIOCSFEATURE (active resolution)");
+}
+
+static void apply_dpi_slot(int slot) {
+    cur_dpi_slot = slot;
+    set_active_resolution(slot);
+    printf("DPI slot -> %d\n", slot + 1);
+}
+
+static void dpi_step(int dir) {
+    Profile *p = active_profile();
+    int slot = cur_dpi_slot;
+    for (int i = 0; i < 4; i++) {
+        slot = (slot + dir + 4) % 4;
+        /* if dpi_enabled, skip disabled slots; otherwise just step */
+        if (!p->dpi_enabled || p->dpi[slot] > 0) {
+            apply_dpi_slot(slot);
+            return;
+        }
+    }
+}
+
+/* Single read-modify-write for all profile settings.
+   Offsets from struct logitech_g600_profile_report __attribute__((packed)):
+     [0]     id
+     [1]     led_red       [2] led_green    [3] led_blue
+     [4]     led_effect    [5] led_duration
+     [6-10]  unknown1[5]
+     [11]    frequency
+     [12]    dpi_shift     [13] dpi_default  [14-17] dpi[4]
+     [18-30] unknown2[13]
+     [31-90] buttons[20]  (3 bytes each: code, modifier, key)
+     [91-93] g_shift_color[3]
+     [94-153] g_shift_buttons[20]
+*/
+static void profile_apply(const Profile *p, int idx) {
+    if (hidraw_fd < 0) return;
+    uint8_t buf[G600_REPORT_SIZE] = {0};
+    buf[0] = profile_report_id(idx);
+    if (ioctl(hidraw_fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) < 0) {
+        perror("HIDIOCGFEATURE"); return;
+    }
+
+    /* LED — always write so effect byte is never garbage */
+    buf[1] = p->led_r;
+    buf[2] = p->led_g;
+    buf[3] = p->led_b;
+    buf[4] = p->led_effect;
+    buf[5] = (p->led_effect == LED_SOLID) ? 0 : p->led_duration;
+    /* mirror to g-shift color */
+    buf[91] = p->led_r;
+    buf[92] = p->led_g;
+    buf[93] = p->led_b;
+
+    /* DPI */
+    if (p->dpi_enabled) {
+        buf[12] = p->dpi_shift   ? (uint8_t)(p->dpi_shift  / 50) : 0;
+        buf[13] = p->dpi_default ? p->dpi_default : 1;
+        for (int i = 0; i < 4; i++)
+            buf[14 + i] = p->dpi[i] ? (uint8_t)(p->dpi[i] / 50) : 0;
+    }
+
+    /* Onboard buttons — ring=5, G7=6, G8=7 */
+    if (p->onboard_enabled) {
+        const struct { int btn_idx; const Binding *b; } btns[] = {
+            {5, &p->onboard_ring},
+            {6, &p->onboard_g7},
+            {7, &p->onboard_g8},
+        };
+        for (int i = 0; i < 3; i++) {
+            int offset = 31 + btns[i].btn_idx * 3;
+            uint8_t code=0, mod=0, key=0;
+            if (binding_to_g600btn(btns[i].b, &code, &mod, &key) == 0) {
+                buf[offset]   = code;
+                buf[offset+1] = mod;
+                buf[offset+2] = key;
+            } else {
+                fprintf(stderr, "onboard btn %d: not representable in flash\n", btns[i].btn_idx);
+            }
+        }
+    }
+
+    if (ioctl(hidraw_fd, HIDIOCSFEATURE(G600_REPORT_SIZE), buf) < 0)
+        perror("HIDIOCSFEATURE (profile_apply)");
+    else
+        printf("Profile %d: LED #%02x%02x%02x effect=%d\n",
+               idx, buf[1], buf[2], buf[3], buf[4]);
+}
+
+/* ──────────────────────────────────────────────
+   Profile switching
+   ────────────────────────────────────────────── */
+static void write_all_profiles(void) {
+    printf("Writing all %d profiles to mouse flash...\n", cfg.num_profiles);
+    for (int i = 0; i < cfg.num_profiles && i < 3; i++)
+        profile_apply(&cfg.profiles[i], i);
+    printf("All profiles written.\n");
+}
+
+static void switch_profile(int idx) {
+    if (idx < 0 || idx >= cfg.num_profiles) return;
+    stop_all_macros();
+    cur_profile  = idx;
+    cur_dpi_slot = active_profile()->dpi_default - 1;
+    if (cur_dpi_slot < 0) cur_dpi_slot = 0;
+    printf("Profile: %s\n", cfg.profiles[idx].name);
+    profile_apply(&cfg.profiles[idx], idx);
+}
+
+static void switch_profile_by_abs(int abs_val) {
+    static int last_idx = -1;
+    int idx = -1;
+    if      (abs_val == 32)  idx = 0;
+    else if (abs_val == 64)  idx = 1;
+    else if (abs_val == 128) idx = 2;
+    if (idx < 0 || idx >= cfg.num_profiles) return;
+    if (idx == last_idx) return;
+    last_idx = idx;
+    switch_profile(idx);
+}
+
+/* ──────────────────────────────────────────────
    Binding dispatch
    ────────────────────────────────────────────── */
 static void dispatch(const Binding *b, int value, int slot) {
     if (!b->is_macro) {
-        /* plain rebind */
         if (b->keycode == 0) return;
+        if (value == 1) {
+            if (b->keycode == SPECIAL_DPI_UP)        { dpi_step(+1); return; }
+            if (b->keycode == SPECIAL_DPI_DOWN)       { dpi_step(-1); return; }
+            if (b->keycode == SPECIAL_PROFILE_NEXT)   { switch_profile((cur_profile + 1) % cfg.num_profiles); return; }
+            if (b->keycode == SPECIAL_PROFILE_PREV)   { switch_profile((cur_profile - 1 + cfg.num_profiles) % cfg.num_profiles); return; }
+            if (b->keycode == SPECIAL_PROFILE_1)      { switch_profile(0); return; }
+            if (b->keycode == SPECIAL_PROFILE_2)      { switch_profile(1); return; }
+            if (b->keycode == SPECIAL_PROFILE_3)      { switch_profile(2); return; }
+        }
+        if (b->keycode >= SPECIAL_BASE) return;
         emit(EV_KEY, b->keycode, value);
         emit(EV_SYN, SYN_REPORT, 0);
     } else {
         if (value == 1) macro_on_press(b, slot);
         else if (value == 0) macro_on_release(b, slot);
     }
-}
-
-/* ──────────────────────────────────────────────
-   LED
-   ────────────────────────────────────────────── */
-static int hidraw_fd = -1;
-
-static uint8_t profile_report_id(int idx) {
-    switch (idx % 3) { case 0: return REPORT_ID_P0; case 1: return REPORT_ID_P1; default: return REPORT_ID_P2; }
-}
-
-static void led_apply(const Profile *p, int idx) {
-    if (!p->led_enabled || hidraw_fd < 0) return;
-    uint8_t buf[G600_REPORT_SIZE] = {0};
-    buf[0] = profile_report_id(idx);
-    if (ioctl(hidraw_fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) < 0) { perror("HIDIOCGFEATURE"); return; }
-    buf[1] = p->led_r; buf[2] = p->led_g; buf[3] = p->led_b;
-    buf[4] = p->led_effect;
-    buf[5] = (p->led_effect == LED_SOLID) ? 0 : p->led_duration;
-    if (ioctl(hidraw_fd, HIDIOCSFEATURE(G600_REPORT_SIZE), buf) < 0) perror("HIDIOCSFEATURE");
-    else printf("LED #%02x%02x%02x effect=%d\n", p->led_r, p->led_g, p->led_b, p->led_effect);
-}
-
-static void dpi_apply(const Profile *p, int idx) {
-    if (!p->dpi_enabled || hidraw_fd < 0) return;
-    uint8_t buf[G600_REPORT_SIZE] = {0};
-    buf[0] = profile_report_id(idx);
-    if (ioctl(hidraw_fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) < 0) { perror("HIDIOCGFEATURE"); return; }
-    /* clamp and convert: DPI = value * 50, range 200-8200 */
-    buf[12] = p->dpi_shift  ? (uint8_t)(p->dpi_shift  / 50) : 0;
-    buf[13] = p->dpi_default ? p->dpi_default : 1;
-    for (int i = 0; i < 4; i++)
-        buf[14 + i] = p->dpi[i] ? (uint8_t)(p->dpi[i] / 50) : 0;
-    if (ioctl(hidraw_fd, HIDIOCSFEATURE(G600_REPORT_SIZE), buf) < 0) perror("HIDIOCSFEATURE (dpi)");
-    else printf("DPI slots: %d %d %d %d (default=%d shift=%d)\n",
-                p->dpi[0], p->dpi[1], p->dpi[2], p->dpi[3],
-                p->dpi_default, p->dpi_shift);
-}
-
-static void onboard_apply(const Profile *p, int idx) {
-    if (!p->onboard_enabled || hidraw_fd < 0) return;
-    uint8_t buf[G600_REPORT_SIZE] = {0};
-    buf[0] = profile_report_id(idx);
-    if (ioctl(hidraw_fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) < 0) { perror("HIDIOCGFEATURE"); return; }
-
-    /* write ring (button 2), G7 (button 6), G8 (button 7) */
-    const struct { int idx; const Binding *b; } btns[] = {
-        {2, &p->onboard_ring},
-        {6, &p->onboard_g7},
-        {7, &p->onboard_g8},
-    };
-    for (int i = 0; i < 3; i++) {
-        int offset = 31 + btns[i].idx * 3;
-        uint8_t code=0, mod=0, key=0;
-        if (binding_to_g600btn(btns[i].b, &code, &mod, &key) == 0) {
-            buf[offset]   = code;
-            buf[offset+1] = mod;
-            buf[offset+2] = key;
-        } else {
-            fprintf(stderr, "onboard: binding not representable in flash\n");
-        }
-    }
-
-    if (ioctl(hidraw_fd, HIDIOCSFEATURE(G600_REPORT_SIZE), buf) < 0)
-        perror("HIDIOCSFEATURE (onboard)");
-    else
-        printf("Onboard buttons written to profile %d\n", idx);
-}
-
-/* ──────────────────────────────────────────────
-   Globals
-   ────────────────────────────────────────────── */
-static volatile int running = 1;
-static Config cfg;
-static int cur_profile = 0;
-static int gshift = 0;
-
-static void sig_handler(int s) { (void)s; running = 0; }
-static Profile *active_profile(void) { return &cfg.profiles[cur_profile]; }
-
-static void write_all_profiles(void) {
-    printf("Writing all %d profiles to mouse flash...\n", cfg.num_profiles);
-    for (int i = 0; i < cfg.num_profiles && i < 3; i++) {
-        led_apply(&cfg.profiles[i], i);
-        dpi_apply(&cfg.profiles[i], i);
-        onboard_apply(&cfg.profiles[i], i);
-    }
-    printf("All profiles written.\n");
-}
-
-static void switch_profile(int idx) {
-    if (idx == cur_profile) return;
-    stop_all_macros();
-    cur_profile = idx;
-    printf("Profile: %s\n", cfg.profiles[idx].name);
-    led_apply(&cfg.profiles[idx], idx);
-    dpi_apply(&cfg.profiles[idx], idx);
-    onboard_apply(&cfg.profiles[idx], idx);
-}
-
-static void switch_profile_by_abs(int abs_val) {
-    /* Map hardware ABS_MISC values to profile indices */
-    int idx = -1;
-    if      (abs_val == 32)  idx = 0;
-    else if (abs_val == 64)  idx = 1;
-    else if (abs_val == 128) idx = 2;
-    if (idx >= 0 && idx < cfg.num_profiles)
-        switch_profile(idx);
 }
 
 /* ──────────────────────────────────────────────
@@ -832,52 +792,32 @@ static void handle_kbd(struct input_event *ev) {
     }
 }
 
-static void handle_mouse(struct input_event *ev) {
-    /* We don't grab fd_mouse so the kernel delivers events to the desktop
-     * normally. We only need to read here to avoid the buffer filling up.
-     * Don't re-emit anything — that would cause double events. */
-    (void)ev;
-}
-
 static void handle_prof(struct input_event *ev) {
     if (ev->type == EV_ABS && ev->code == ABS_MISC && ev->value != 0)
         switch_profile_by_abs(ev->value);
 }
 
 /* ──────────────────────────────────────────────
-   Main
+   Device discovery
    ────────────────────────────────────────────── */
-/* ──────────────────────────────────────────────
-   Device auto-discovery
-   ────────────────────────────────────────────── */
-
-/* Open an event device and check if it belongs to the G600 */
 static int g600_check_device(const char *path, int *has_rel, int *has_abs, int *has_gkeys) {
     int fd = open(path, O_RDONLY | O_NONBLOCK);
     if (fd < 0) return 0;
-
     char name[256] = {0};
     if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) < 0) { close(fd); return 0; }
     if (strstr(name, "G600") == NULL) { close(fd); return 0; }
-
     struct input_id id;
     if (ioctl(fd, EVIOCGID, &id) < 0) { close(fd); return 0; }
     if (id.vendor != G600_VID || id.product != G600_PID) { close(fd); return 0; }
-
-    /* Check event types */
     uint8_t evbits[EV_MAX/8+1] = {0};
     ioctl(fd, EVIOCGBIT(0, sizeof(evbits)), evbits);
     *has_rel = (evbits[EV_REL/8] >> (EV_REL%8)) & 1;
     *has_abs = (evbits[EV_ABS/8] >> (EV_ABS%8)) & 1;
-
-    /* Check if it has G-key scancodes (KEY_1 through KEY_EQUAL) */
     uint8_t keybits[KEY_MAX/8+1] = {0};
     ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits);
-    /* G9-G20 map to KEY_1(2) through KEY_EQUAL(13) */
     int has_k1 = (keybits[KEY_1/8] >> (KEY_1%8)) & 1;
-    int has_b  = (keybits[KEY_B/8] >> (KEY_B%8)) & 1; /* G-Shift sends KEY_B */
+    int has_b  = (keybits[KEY_B/8] >> (KEY_B%8)) & 1;
     *has_gkeys = has_k1 && has_b && !(*has_rel);
-
     close(fd);
     return 1;
 }
@@ -885,31 +825,20 @@ static int g600_check_device(const char *path, int *has_rel, int *has_abs, int *
 static int g600_find_devices(char *kbd, char *mouse, char *prof, size_t bufsz) {
     int found_kbd=0, found_mouse=0, found_prof=0;
     char path[64];
-
     for (int i = 0; i < 32; i++) {
         snprintf(path, sizeof(path), "/dev/input/event%d", i);
         int has_rel=0, has_abs=0, has_gkeys=0;
         if (!g600_check_device(path, &has_rel, &has_abs, &has_gkeys)) continue;
-
-        printf("Found G600 device: %s (rel=%d abs=%d gkeys=%d)\n",
-               path, has_rel, has_abs, has_gkeys);
-
+        printf("Found G600 device: %s (rel=%d abs=%d gkeys=%d)\n", path, has_rel, has_abs, has_gkeys);
         if (has_rel && !found_mouse)       { strncpy(mouse, path, bufsz-1); found_mouse=1; }
         else if (has_gkeys && !found_kbd)  { strncpy(kbd,   path, bufsz-1); found_kbd=1;   }
         else if (has_abs && !found_prof)   { strncpy(prof,  path, bufsz-1); found_prof=1;  }
     }
-
     return found_kbd && found_mouse && found_prof;
 }
 
-/* Find the hidraw interface 1 for the G600 (has profile feature reports) */
 static int g600_find_hidraw(char *out, size_t bufsz) {
-    /* Try stable symlink first */
-    if (access(DEV_HIDRAW_SYMLINK, F_OK) == 0) {
-        strncpy(out, DEV_HIDRAW_SYMLINK, bufsz-1);
-        return 1;
-    }
-    /* Fall back: scan hidraw devices, pick interface 1 (if01) */
+    if (access(DEV_HIDRAW_SYMLINK, F_OK) == 0) { strncpy(out, DEV_HIDRAW_SYMLINK, bufsz-1); return 1; }
     for (int i = 0; i < 16; i++) {
         char path[64];
         snprintf(path, sizeof(path), "/dev/hidraw%d", i);
@@ -918,7 +847,6 @@ static int g600_find_hidraw(char *out, size_t bufsz) {
         struct hidraw_devinfo info = {0};
         if (ioctl(fd, HIDIOCGRAWINFO, &info) == 0 &&
             info.vendor == G600_VID && info.product == G600_PID) {
-            /* Try to read profile 1 report — only interface 1 responds */
             uint8_t buf[G600_REPORT_SIZE] = {0};
             buf[0] = REPORT_ID_P0;
             if (ioctl(fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) == 0) {
@@ -932,6 +860,9 @@ static int g600_find_hidraw(char *out, size_t bufsz) {
     return 0;
 }
 
+/* ──────────────────────────────────────────────
+   Main
+   ────────────────────────────────────────────── */
 int main(void) {
     signal(SIGINT, sig_handler); signal(SIGTERM, sig_handler);
 
@@ -945,32 +876,34 @@ int main(void) {
     if (access(cfg_path, F_OK) != 0) config_write_default(cfg_path);
     config_load(&cfg, cfg_path);
 
-   char dev_kbd[64]={0}, dev_mouse[64]={0}, dev_prof[64]={0}, dev_hidraw[128]={0};    printf("Scanning for G600 devices...\n");
+    char dev_kbd[64]={0}, dev_mouse[64]={0}, dev_prof[64]={0}, dev_hidraw[128]={0};
+    printf("Scanning for G600 devices...\n");
     if (!g600_find_devices(dev_kbd, dev_mouse, dev_prof, sizeof(dev_kbd))) {
         fprintf(stderr, "Could not find all G600 event devices\n");
         return 1;
     }
-    if (!g600_find_hidraw(dev_hidraw, sizeof(dev_hidraw))) {
+    if (!g600_find_hidraw(dev_hidraw, sizeof(dev_hidraw)))
         fprintf(stderr, "Warning: Could not find G600 hidraw device (LED/DPI disabled)\n");
-    }
-    printf("KBD:    %s\n", dev_kbd);
-    printf("MOUSE:  %s\n", dev_mouse);
-    printf("PROF:   %s\n", dev_prof);
-    printf("HIDRAW: %s\n", dev_hidraw[0] ? dev_hidraw : "(none)");
+
+    printf("KBD:    %s\nMOUSE:  %s\nPROF:   %s\nHIDRAW: %s\n",
+           dev_kbd, dev_mouse, dev_prof, dev_hidraw[0] ? dev_hidraw : "(none)");
 
     int fd_kbd   = open(dev_kbd,   O_RDONLY | O_NONBLOCK); if (fd_kbd   < 0) { perror("open kbd");   return 1; }
     int fd_mouse = open(dev_mouse, O_RDONLY | O_NONBLOCK); if (fd_mouse < 0) { perror("open mouse"); return 1; }
     int fd_prof  = open(dev_prof,  O_RDONLY | O_NONBLOCK); if (fd_prof  < 0) { perror("open prof");  return 1; }
 
     hidraw_fd = dev_hidraw[0] ? open(dev_hidraw, O_RDWR) : -1;
-    if (hidraw_fd < 0) perror("open hidraw (LED disabled)");
+    if (hidraw_fd < 0) perror("open hidraw (LED/DPI disabled)");
 
     if (uinput_setup() < 0) return 1;
     ioctl(fd_kbd, EVIOCGRAB, 1);
 
     int fd_ino = inotify_init1(IN_NONBLOCK);
     int wd = -1;
-    if (fd_ino >= 0) wd = inotify_add_watch(fd_ino, cfg_path, IN_CLOSE_WRITE | IN_MODIFY);
+    if (fd_ino >= 0) wd = inotify_add_watch(fd_ino, cfg_path, IN_CLOSE_WRITE);
+
+    cur_dpi_slot = active_profile()->dpi_default - 1;
+    if (cur_dpi_slot < 0) cur_dpi_slot = 0;
 
     write_all_profiles();
     printf("g600d running. Profile: %s\n", active_profile()->name);
@@ -992,7 +925,8 @@ int main(void) {
             printf("Config changed, reloading...\n");
             stop_all_macros();
             config_load(&cfg, cfg_path);
-            cur_profile = 0;
+            cur_dpi_slot = active_profile()->dpi_default - 1;
+            if (cur_dpi_slot < 0) cur_dpi_slot = 0;
             write_all_profiles();
         }
     }
