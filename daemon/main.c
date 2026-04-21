@@ -690,121 +690,138 @@ static void dpi_step(int dir) {
      [91-93] g_shift_color[3]
      [94-153] g_shift_buttons[20]
 */
+/* Drop-in replacement for profile_apply() in daemon/main.c */
+
 static void profile_apply(const Profile *p, int idx) {
     if (hidraw_fd < 0) return;
+
     uint8_t buf[G600_REPORT_SIZE] = {0};
-    buf[0] = profile_report_id(idx);
+    uint8_t rid = profile_report_id(idx);
+
+    buf[0] = rid;
     if (ioctl(hidraw_fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) < 0) {
-        fprintf(stderr, "HIDIOCGFEATURE slot %d (report 0x%02x): %s\n", idx, profile_report_id(idx), strerror(errno));
+        fprintf(stderr, "HIDIOCGFEATURE slot %d (report 0x%02x): %s\n",
+                idx, rid, strerror(errno));
         return;
     }
+    buf[0] = rid;
 
-
-    /* LED — always write so effect byte is never garbage */
+    /* LED */
     buf[1] = p->led_r;
     buf[2] = p->led_g;
     buf[3] = p->led_b;
     buf[4] = p->led_effect;
     buf[5] = (p->led_effect == LED_SOLID) ? 0 : p->led_duration;
-    /* mirror to g-shift color */
-    buf[91] = p->led_r;
-    buf[92] = p->led_g;
-    buf[93] = p->led_b;
-memset(buf + 12, 0, 6);
-    /* DPI */
+
+    /* DPI — always write something sane, even if dpi_enabled is false.
+       Otherwise the mouse sits on DPI slot 0 which may be 0 (disabled). */
     if (p->dpi_enabled) {
         buf[12] = p->dpi_shift   ? (uint8_t)(p->dpi_shift  / 50) : 0;
         buf[13] = p->dpi_default ? p->dpi_default : 1;
         for (int i = 0; i < 4; i++)
             buf[14 + i] = p->dpi[i] ? (uint8_t)(p->dpi[i] / 50) : 0;
+    } else {
+        /* Minimal sane default: slot 1 = 1200 DPI, others disabled. */
+        buf[12] = 0;
+        buf[13] = 1;
+        buf[14] = 1200 / 50;
+        buf[15] = 0;
+        buf[16] = 0;
+        buf[17] = 0;
     }
 
-    /* Zero slots 0-8 entirely before writing to stomp any stale bytes from
-       previous botched writes (read-modify-write returns old flash contents
-       which may have garbage in code/mod/key from earlier incorrect writes).
-       Slot layout: 0=left, 1=right, 2=middle, 3=side, 4=tilt-right(?),
-       5=ring, 6=G7, 7=G8, 8=unused/reserved, 9=G9 .. 20=G20. */
-    memset(buf + 31, 0, 9 * 3);
-
-
+    /* Mouse buttons (slots 0-4) */
     for (int i = 0; i < NUM_MKEYS; i++) {
-        int offset = 31 + i * 3;
-        uint8_t code=0, mod=0, key=0;
+        int off = 31 + i * 3;
+        uint8_t code = 0, mod = 0, key = 0;
         if (binding_to_g600btn(&p->mkeys[i], &code, &mod, &key) == 0) {
-            buf[offset]   = code;
-            buf[offset+1] = mod;
-            buf[offset+2] = key;
+            buf[off + 0] = code;
+            buf[off + 1] = mod;
+            buf[off + 2] = key;
+        } else {
+            buf[off + 0] = 0;
+            buf[off + 1] = 0;
+            buf[off + 2] = 0;
         }
     }
-    /* Onboard buttons — ring=5, G7=6, G8=7 */
+
+    /* Onboard (slots 5-7) */
     if (p->onboard_enabled) {
-        const struct { int btn_idx; const Binding *b; } btns[] = {
-            {5, &p->onboard_ring},
-            {6, &p->onboard_g7},
-            {7, &p->onboard_g8},
-        };
+        const Binding *ob[3] = { &p->onboard_ring, &p->onboard_g7, &p->onboard_g8 };
         for (int i = 0; i < 3; i++) {
-            int offset = 31 + btns[i].btn_idx * 3;
-            uint8_t code=0, mod=0, key=0;
-            if (binding_to_g600btn(btns[i].b, &code, &mod, &key) == 0) {
-                buf[offset]   = code;
-                buf[offset+1] = mod;
-                buf[offset+2] = key;
+            int off = 31 + (5 + i) * 3;
+            uint8_t code = 0, mod = 0, key = 0;
+            if (binding_to_g600btn(ob[i], &code, &mod, &key) == 0) {
+                buf[off + 0] = code;
+                buf[off + 1] = mod;
+                buf[off + 2] = key;
             } else {
-                fprintf(stderr, "onboard btn %d: not representable in flash\n", btns[i].btn_idx);
+                buf[off + 0] = 0;
+                buf[off + 1] = 0;
+                buf[off + 2] = 0;
             }
         }
     }
 
-    static const uint8_t gkey_hid_normal[12] = {
-            0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23,
-            0x24, 0x25, 0x26, 0x27, 0x2d, 0x2e
-        };
-        static const uint8_t gkey_hid_shift[12] = {
-            0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
-            0x40, 0x41, 0x42, 0x43, 0x44, 0x45
-        };
-        for (int btn = 8; btn < 20; btn++) {
-            int off = 31 + btn * 3;
-            buf[off]     = 0;
-            buf[off + 1] = 0;
-            buf[off + 2] = gkey_hid_normal[btn - 8];
-            int off2 = 94 + btn * 3;
-            buf[off2]     = 0;
-            buf[off2 + 1] = 0;
-            buf[off2 + 2] = gkey_hid_shift[btn - 8];
-        }
-        fprintf(stderr, "APPLY profile %d (%s): slots 0-7 = ", idx, p->name);
-        for (int i = 0; i < 8; i++)
-            fprintf(stderr, "%02x:%02x:%02x ", buf[31+i*3], buf[31+i*3+1], buf[31+i*3+2]);
-        fprintf(stderr, "onboard_en=%d mkey[0].keycode=%d\n", p->onboard_enabled, p->mkeys[0].keycode);
+    /* G-keys (slots 8-19): ALWAYS write factory-default scancodes
+       (1,2,3,4,5,6,7,8,9,0,-,= for normal; F1..F12 for g-shift).
+       The daemon's handle_kbd() reads these scancodes from fd_kbd and
+       dispatches to the real binding via uinput. DO NOT change these. */
+    static const uint8_t gkey_hid_normal[NUM_GKEYS] = {
+        0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23,  /* 1,2,3,4,5,6  → G9..G14 */
+        0x24, 0x25, 0x26, 0x27, 0x2d, 0x2e   /* 7,8,9,0,-,=  → G15..G20 */
+    };
+    static const uint8_t gkey_hid_shift[NUM_GKEYS] = {
+        0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,  /* F1..F6 */
+        0x40, 0x41, 0x42, 0x43, 0x44, 0x45   /* F7..F12 */
+    };
+    for (int i = 0; i < NUM_GKEYS; i++) {
+        int btn = 8 + i;
+        int off  = 31 + btn * 3;
+        int off2 = 94 + btn * 3;
+        buf[off + 0] = 0; buf[off + 1] = 0; buf[off + 2] = gkey_hid_normal[i];
+        buf[off2 + 0] = 0; buf[off2 + 1] = 0; buf[off2 + 2] = gkey_hid_shift[i];
+    }
+
+    /* G-shift color mirror */
+    buf[91] = p->led_r;
+    buf[92] = p->led_g;
+    buf[93] = p->led_b;
+
+    fprintf(stderr, "APPLY profile %d (%s): slots 0-7 = ", idx, p->name);
+    for (int i = 0; i < 8; i++)
+        fprintf(stderr, "%02x:%02x:%02x ", buf[31+i*3], buf[31+i*3+1], buf[31+i*3+2]);
+    fprintf(stderr, "\n");
+
     if (ioctl(hidraw_fd, HIDIOCSFEATURE(G600_REPORT_SIZE), buf) < 0)
-        fprintf(stderr, "HIDIOCSFEATURE slot %d (report 0x%02x): %s\n", idx, profile_report_id(idx), strerror(errno));
+        fprintf(stderr, "HIDIOCSFEATURE slot %d (report 0x%02x): %s\n",
+                idx, rid, strerror(errno));
     else
         printf("Profile %d (%s): LED #%02x%02x%02x effect=%d — OK\n",
                idx, p->name, buf[1], buf[2], buf[3], buf[4]);
 }
 
-/* ──────────────────────────────────────────────
-   Profile switching
-   ────────────────────────────────────────────── */
+/* ──── Also fix write_all_profiles() — the sleep is broken ──── */
+
 static void write_all_profiles(void) {
     printf("Writing all %d profiles to mouse flash...\n", cfg.num_profiles);
     for (int i = 0; i < cfg.num_profiles && i < 3; i++) {
         int abs = cfg.profiles[i].abs_misc_val;
         int slot = (abs == 32) ? 0 : (abs == 64) ? 1 : (abs == 128) ? 2 : i;
         profile_apply(&cfg.profiles[i], slot);
-        struct timespec ts = {0, 50000000}; /* 50 ms — G600 needs time to commit each flash write */
+        /* 50 ms — tv_nsec must be < 1e9. Your previous 5e9 overflowed. */
+        struct timespec ts = {5, 50000000};
         nanosleep(&ts, NULL);
     }
     printf("All profiles written.\n");
 }
 
+
 static void switch_profile(int idx) {
     if (idx == cur_profile) return;
     stop_all_macros();
     gshift_active = 0;
-    struct timespec ts = {0, 50000000};
+    struct timespec ts = {5, 50000000};
     nanosleep(&ts, NULL);
 
     cur_profile = idx;
