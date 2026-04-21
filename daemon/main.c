@@ -14,6 +14,7 @@
 #include <sys/ioctl.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
+#include <unistd.h>
 #include <linux/hidraw.h>
 #include <strings.h>
 
@@ -205,7 +206,7 @@ static const int SRC_GKEYS[NUM_GKEYS] = {
 static const char *GKEY_NAMES[NUM_GKEYS] = {
     "G9","G10","G11","G12","G13","G14","G15","G16","G17","G18","G19","G20"
 };
-static const int SRC_MKEYS[NUM_MKEYS] = { BTN_LEFT, BTN_RIGHT, BTN_MIDDLE, BTN_SIDE, BTN_EXTRA };
+
 static const char *MKEY_NAMES[NUM_MKEYS] = { "BTN_LEFT","BTN_RIGHT","MIDDLE","TILT_LEFT","TILT_RIGHT" };
 
 typedef struct {
@@ -530,11 +531,12 @@ static void exec_sequence(const Binding *b) {
 }
 
 typedef struct {
-    Binding      binding;
+    Binding  binding;
     volatile int running;
     volatile int held;
-    pthread_t    tid;
-    int          active;
+    pthread_t tid;
+    int       active;
+    int       detached; // new
 } MacroThread;
 
 #define MAX_MACRO_THREADS (NUM_GKEYS * 2 + NUM_MKEYS)
@@ -547,9 +549,17 @@ static void *macro_thread_fn(void *arg) {
     if (b->hold == HOLD_ONCE) {
         exec_sequence(b);
     } else if (b->hold == HOLD_REPEAT) {
-        while (mt->held && mt->running) exec_sequence(b);
+        while (mt->held && mt->running) {
+            exec_sequence(b);
+            struct timespec ts = {0, 1000000}; /* 1ms yield */
+            nanosleep(&ts, NULL);
+        }
     } else if (b->hold == HOLD_TOGGLE) {
-        while (mt->running) exec_sequence(b);
+        while (mt->running) {
+            exec_sequence(b);
+            struct timespec ts = {0, 1000000};
+            nanosleep(&ts, NULL);
+        }
     }
     pthread_mutex_lock(&mt_lock);
     mt->active = 0;
@@ -608,14 +618,20 @@ static void macro_on_release(const Binding *b, int slot) {
     mt->running = 1; mt->held = 0; mt->active = 1;
     pthread_mutex_unlock(&mt_lock);
     pthread_create(&mt->tid, NULL, macro_thread_fn, mt);
-    pthread_detach(mt->tid);
 }
 
 static void stop_all_macros(void) {
     pthread_mutex_lock(&mt_lock);
+    pthread_t tids[MAX_MACRO_THREADS];
+    int n = 0;
     for (int i = 0; i < MAX_MACRO_THREADS; i++)
-        if (macro_threads[i].active) macro_threads[i].running = 0;
+        if (macro_threads[i].active) {
+            macro_threads[i].running = 0;
+            macro_threads[i].held    = 0;
+            tids[n++] = macro_threads[i].tid;
+        }
     pthread_mutex_unlock(&mt_lock);
+    for (int i = 0; i < n; i++) pthread_join(tids[i], NULL);
 }
 
 /* ──────────────────────────────────────────────
@@ -724,31 +740,34 @@ static void profile_apply(const Profile *p, int idx) {
    ────────────────────────────────────────────── */
 static void write_all_profiles(void) {
     printf("Writing all %d profiles to mouse flash...\n", cfg.num_profiles);
-    for (int i = 0; i < cfg.num_profiles && i < 3; i++)
-        profile_apply(&cfg.profiles[i], i);
+    for (int i = 0; i < cfg.num_profiles && i < 3; i++) {
+        int abs = cfg.profiles[i].abs_misc_val;
+        int slot = (abs == 32) ? 0 : (abs == 64) ? 1 : (abs == 128) ? 2 : i;
+        profile_apply(&cfg.profiles[i], slot);
+    }
     printf("All profiles written.\n");
 }
 
 static void switch_profile(int idx) {
-    if (idx < 0 || idx >= cfg.num_profiles) return;
+    if (idx == cur_profile) return;
     stop_all_macros();
-    cur_profile  = idx;
-    cur_dpi_slot = active_profile()->dpi_default - 1;
-    if (cur_dpi_slot < 0) cur_dpi_slot = 0;
+    struct timespec ts = {0, 50000000};
+    nanosleep(&ts, NULL);
+    cur_profile = idx;
     printf("Profile: %s\n", cfg.profiles[idx].name);
-    profile_apply(&cfg.profiles[idx], idx);
+    int abs = cfg.profiles[idx].abs_misc_val;
+    int slot = (abs == 32) ? 0 : (abs == 64) ? 1 : (abs == 128) ? 2 : idx;
+    profile_apply(&cfg.profiles[idx], slot);
 }
 
 static void switch_profile_by_abs(int abs_val) {
-    static int last_idx = -1;
-    int idx = -1;
-    if      (abs_val == 32)  idx = 0;
-    else if (abs_val == 64)  idx = 1;
-    else if (abs_val == 128) idx = 2;
-    if (idx < 0 || idx >= cfg.num_profiles) return;
-    if (idx == last_idx) return;
-    last_idx = idx;
-    switch_profile(idx);
+    if (abs_val == 0) return; /* ignore DPI/reset events */
+    for (int i = 0; i < cfg.num_profiles; i++) {
+        if (cfg.profiles[i].abs_misc_val == abs_val) {
+            switch_profile(i);
+            return;
+        }
+    }
 }
 
 /* ──────────────────────────────────────────────
@@ -846,7 +865,7 @@ static int g600_find_hidraw(char *out, size_t bufsz) {
         if (fd < 0) continue;
         struct hidraw_devinfo info = {0};
         if (ioctl(fd, HIDIOCGRAWINFO, &info) == 0 &&
-            info.vendor == G600_VID && info.product == G600_PID) {
+            (uint16_t)info.vendor == G600_VID && (uint16_t)info.product == G600_PID) {
             uint8_t buf[G600_REPORT_SIZE] = {0};
             buf[0] = REPORT_ID_P0;
             if (ioctl(fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) == 0) {
