@@ -203,6 +203,10 @@ static const int SRC_GKEYS[NUM_GKEYS] = {
     KEY_1,KEY_2,KEY_3,KEY_4,KEY_5,KEY_6,
     KEY_7,KEY_8,KEY_9,KEY_0,KEY_MINUS,KEY_EQUAL,
 };
+static const int SRC_GKEYS_SHIFT[NUM_GKEYS] = {
+    KEY_F1,KEY_F2,KEY_F3,KEY_F4,KEY_F5,KEY_F6,
+    KEY_F7,KEY_F8,KEY_F9,KEY_F10,KEY_F11,KEY_F12,
+};
 static const char *GKEY_NAMES[NUM_GKEYS] = {
     "G9","G10","G11","G12","G13","G14","G15","G16","G17","G18","G19","G20"
 };
@@ -240,7 +244,8 @@ static volatile int running = 1;
 static Config       cfg;
 static int          cur_profile = 0;
 static int          cur_dpi_slot = 0;
-static int          gshift = 0;
+static int          gshift_active = 0;
+
 static int          hidraw_fd = -1;
 static int          uinput_fd = -1;
 static pthread_mutex_t uinput_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -596,6 +601,10 @@ static void macro_on_press(const Binding *b, int slot) {
     mt->binding.keycode = slot;
     mt->running = 1; mt->held = 1; mt->active = 1;
     pthread_mutex_unlock(&mt_lock);
+    fprintf(stderr, "SPAWN slot=%d is_macro=%d nsteps=%d first_key=%d trigger=%d hold=%d\n",
+        slot, mt->binding.is_macro, mt->binding.nsteps,
+        mt->binding.nsteps > 0 ? mt->binding.steps[0].keys[0] : -1,
+        mt->binding.trigger, mt->binding.hold);
     pthread_create(&mt->tid, NULL, macro_thread_fn, mt);
     pthread_detach(mt->tid);
 }
@@ -686,7 +695,8 @@ static void profile_apply(const Profile *p, int idx) {
     uint8_t buf[G600_REPORT_SIZE] = {0};
     buf[0] = profile_report_id(idx);
     if (ioctl(hidraw_fd, HIDIOCGFEATURE(G600_REPORT_SIZE), buf) < 0) {
-        perror("HIDIOCGFEATURE"); return;
+        fprintf(stderr, "HIDIOCGFEATURE slot %d (report 0x%02x): %s\n", idx, profile_report_id(idx), strerror(errno));
+        return;
     }
 
     /* LED — always write so effect byte is never garbage */
@@ -708,14 +718,15 @@ static void profile_apply(const Profile *p, int idx) {
             buf[14 + i] = p->dpi[i] ? (uint8_t)(p->dpi[i] / 50) : 0;
     }
 
-    /* Onboard buttons — ring=5, G7=6, G8=7 */
+    /* Onboard buttons — G7=6, G8=7 (ring is forced below, not configurable) */
     if (p->onboard_enabled) {
-        const struct { int btn_idx; const Binding *b; } btns[] = {
-            {5, &p->onboard_ring},
-            {6, &p->onboard_g7},
-            {7, &p->onboard_g8},
-        };
-        for (int i = 0; i < 3; i++) {
+    const struct { int btn_idx; const Binding *b; } btns[] = {
+        {5, &p->onboard_ring},
+        {6, &p->onboard_g7},
+        {7, &p->onboard_g8},
+    };
+    for (int i = 0; i < 3; i++) {
+
             int offset = 31 + btns[i].btn_idx * 3;
             uint8_t code=0, mod=0, key=0;
             if (binding_to_g600btn(btns[i].b, &code, &mod, &key) == 0) {
@@ -728,11 +739,29 @@ static void profile_apply(const Profile *p, int idx) {
         }
     }
 
+    static const uint8_t gkey_hid_normal[12] = {
+            0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23,
+            0x24, 0x25, 0x26, 0x27, 0x2d, 0x2e
+        };
+        static const uint8_t gkey_hid_shift[12] = {
+            0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+            0x40, 0x41, 0x42, 0x43, 0x44, 0x45
+        };
+        for (int btn = 8; btn < 20; btn++) {
+            int off = 31 + btn * 3;
+            buf[off]     = 0;
+            buf[off + 1] = 0;
+            buf[off + 2] = gkey_hid_normal[btn - 8];
+            int off2 = 94 + btn * 3;
+            buf[off2]     = 0;
+            buf[off2 + 1] = 0;
+            buf[off2 + 2] = gkey_hid_shift[btn - 8];
+        }
     if (ioctl(hidraw_fd, HIDIOCSFEATURE(G600_REPORT_SIZE), buf) < 0)
-        perror("HIDIOCSFEATURE (profile_apply)");
+        fprintf(stderr, "HIDIOCSFEATURE slot %d (report 0x%02x): %s\n", idx, profile_report_id(idx), strerror(errno));
     else
-        printf("Profile %d: LED #%02x%02x%02x effect=%d\n",
-               idx, buf[1], buf[2], buf[3], buf[4]);
+        printf("Profile %d (%s): LED #%02x%02x%02x effect=%d — OK\n",
+               idx, p->name, buf[1], buf[2], buf[3], buf[4]);
 }
 
 /* ──────────────────────────────────────────────
@@ -744,6 +773,8 @@ static void write_all_profiles(void) {
         int abs = cfg.profiles[i].abs_misc_val;
         int slot = (abs == 32) ? 0 : (abs == 64) ? 1 : (abs == 128) ? 2 : i;
         profile_apply(&cfg.profiles[i], slot);
+        struct timespec ts = {0, 50000000}; /* 50 ms — G600 needs time to commit each flash write */
+        nanosleep(&ts, NULL);
     }
     printf("All profiles written.\n");
 }
@@ -751,8 +782,10 @@ static void write_all_profiles(void) {
 static void switch_profile(int idx) {
     if (idx == cur_profile) return;
     stop_all_macros();
+    gshift_active = 0;
     struct timespec ts = {0, 50000000};
     nanosleep(&ts, NULL);
+
     cur_profile = idx;
     printf("Profile: %s\n", cfg.profiles[idx].name);
     int abs = cfg.profiles[idx].abs_misc_val;
@@ -798,22 +831,37 @@ static void dispatch(const Binding *b, int value, int slot) {
    Event handlers
    ────────────────────────────────────────────── */
 static void handle_kbd(struct input_event *ev) {
-    if (ev->type != EV_KEY) return;
-    static int lshift_down = 0, keyb_down = 0;
-    if (ev->code == KEY_LEFTSHIFT) { lshift_down = (ev->value != 0); gshift = lshift_down && keyb_down; return; }
-    if (ev->code == KEY_B)         { keyb_down   = (ev->value != 0); gshift = lshift_down && keyb_down; return; }
+	if (ev->type != EV_KEY) return;
+    fprintf(stderr, "KBD code=%d val=%d\n", ev->code, ev->value);
     for (int i = 0; i < NUM_GKEYS; i++) {
-        if (ev->code != SRC_GKEYS[i]) continue;
-        Binding *b = gshift ? &active_profile()->gkeys_gshift[i] : &active_profile()->gkeys_normal[i];
-        int slot = gshift ? (NUM_GKEYS + i) : i;
-        dispatch(b, ev->value, slot);
+    if (ev->code == SRC_GKEYS[i]) {
+        int shifted = gshift_active;
+        Binding *b = shifted ? &active_profile()->gkeys_gshift[i]
+                             : &active_profile()->gkeys_normal[i];
+        dispatch(b, ev->value, shifted ? NUM_GKEYS + i : i);
         return;
+    }
+
+        if (ev->code == SRC_GKEYS_SHIFT[i]) {
+            Binding *b = &active_profile()->gkeys_gshift[i];
+            dispatch(b, ev->value, NUM_GKEYS + i);
+            return;
+        }
     }
 }
 
 static void handle_prof(struct input_event *ev) {
-    if (ev->type == EV_ABS && ev->code == ABS_MISC && ev->value != 0)
-        switch_profile_by_abs(ev->value);
+    if (ev->type != EV_ABS || ev->code != ABS_MISC) return;
+    if (ev->value == 0) { gshift_active = 0; return; }
+    for (int i = 0; i < cfg.num_profiles; i++) {
+        if (cfg.profiles[i].abs_misc_val == ev->value) {
+            if (i == cur_profile)
+                gshift_active = 1;   /* ring held in current profile */
+            else
+                switch_profile(i);   /* hardware profile switch      */
+            return;
+        }
+    }
 }
 
 /* ──────────────────────────────────────────────
