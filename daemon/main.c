@@ -294,11 +294,11 @@ static int binding_to_g600btn(const Binding *b, uint8_t *code, uint8_t *mod, uin
     if (kc == SPECIAL_PROFILE_NEXT) { *code=0x14; *mod=0; *key=0; return 0; }
     if (kc == SPECIAL_PROFILE_PREV) { *code=0x14; *mod=0; *key=0; return 0; }
     if (kc == 0) { *code=0; *mod=0; *key=0; return 0; }
-    if (kc == BTN_LEFT)   { *code=0; *mod=1; *key=0; return 0; }
-    if (kc == BTN_RIGHT)  { *code=0; *mod=2; *key=0; return 0; }
-    if (kc == BTN_MIDDLE) { *code=0; *mod=3; *key=0; return 0; }
-    if (kc == BTN_SIDE)   { *code=0; *mod=4; *key=0; return 0; }
-    if (kc == BTN_EXTRA)  { *code=0; *mod=5; *key=0; return 0; }
+    if (kc == BTN_LEFT)   { *code=0x01; *mod=0; *key=0; return 0; }
+    if (kc == BTN_RIGHT)  { *code=0x02; *mod=0; *key=0; return 0; }
+    if (kc == BTN_MIDDLE) { *code=0x03; *mod=0; *key=0; return 0; }
+    if (kc == BTN_SIDE)   { *code=0x04; *mod=0; *key=0; return 0; }
+    if (kc == BTN_EXTRA)  { *code=0x05; *mod=0; *key=0; return 0; }
     uint8_t hk=0, hm=0;
     if (linux_to_hid(kc, &hk, &hm) == 0) { *code=0; *mod=hm; *key=hk; return 0; }
     return -1;
@@ -699,6 +699,7 @@ static void profile_apply(const Profile *p, int idx) {
         return;
     }
 
+
     /* LED — always write so effect byte is never garbage */
     buf[1] = p->led_r;
     buf[2] = p->led_g;
@@ -709,7 +710,7 @@ static void profile_apply(const Profile *p, int idx) {
     buf[91] = p->led_r;
     buf[92] = p->led_g;
     buf[93] = p->led_b;
-
+memset(buf + 12, 0, 6);
     /* DPI */
     if (p->dpi_enabled) {
         buf[12] = p->dpi_shift   ? (uint8_t)(p->dpi_shift  / 50) : 0;
@@ -718,15 +719,31 @@ static void profile_apply(const Profile *p, int idx) {
             buf[14 + i] = p->dpi[i] ? (uint8_t)(p->dpi[i] / 50) : 0;
     }
 
-    /* Onboard buttons — G7=6, G8=7 (ring is forced below, not configurable) */
-    if (p->onboard_enabled) {
-    const struct { int btn_idx; const Binding *b; } btns[] = {
-        {5, &p->onboard_ring},
-        {6, &p->onboard_g7},
-        {7, &p->onboard_g8},
-    };
-    for (int i = 0; i < 3; i++) {
+    /* Zero slots 0-8 entirely before writing to stomp any stale bytes from
+       previous botched writes (read-modify-write returns old flash contents
+       which may have garbage in code/mod/key from earlier incorrect writes).
+       Slot layout: 0=left, 1=right, 2=middle, 3=side, 4=tilt-right(?),
+       5=ring, 6=G7, 7=G8, 8=unused/reserved, 9=G9 .. 20=G20. */
+    memset(buf + 31, 0, 9 * 3);
 
+
+    for (int i = 0; i < NUM_MKEYS; i++) {
+        int offset = 31 + i * 3;
+        uint8_t code=0, mod=0, key=0;
+        if (binding_to_g600btn(&p->mkeys[i], &code, &mod, &key) == 0) {
+            buf[offset]   = code;
+            buf[offset+1] = mod;
+            buf[offset+2] = key;
+        }
+    }
+    /* Onboard buttons — ring=5, G7=6, G8=7 */
+    if (p->onboard_enabled) {
+        const struct { int btn_idx; const Binding *b; } btns[] = {
+            {5, &p->onboard_ring},
+            {6, &p->onboard_g7},
+            {7, &p->onboard_g8},
+        };
+        for (int i = 0; i < 3; i++) {
             int offset = 31 + btns[i].btn_idx * 3;
             uint8_t code=0, mod=0, key=0;
             if (binding_to_g600btn(btns[i].b, &code, &mod, &key) == 0) {
@@ -757,6 +774,10 @@ static void profile_apply(const Profile *p, int idx) {
             buf[off2 + 1] = 0;
             buf[off2 + 2] = gkey_hid_shift[btn - 8];
         }
+        fprintf(stderr, "APPLY profile %d (%s): slots 0-7 = ", idx, p->name);
+        for (int i = 0; i < 8; i++)
+            fprintf(stderr, "%02x:%02x:%02x ", buf[31+i*3], buf[31+i*3+1], buf[31+i*3+2]);
+        fprintf(stderr, "onboard_en=%d mkey[0].keycode=%d\n", p->onboard_enabled, p->mkeys[0].keycode);
     if (ioctl(hidraw_fd, HIDIOCSFEATURE(G600_REPORT_SIZE), buf) < 0)
         fprintf(stderr, "HIDIOCSFEATURE slot %d (report 0x%02x): %s\n", idx, profile_report_id(idx), strerror(errno));
     else
@@ -831,16 +852,23 @@ static void dispatch(const Binding *b, int value, int slot) {
    Event handlers
    ────────────────────────────────────────────── */
 static void handle_kbd(struct input_event *ev) {
-	if (ev->type != EV_KEY) return;
-    fprintf(stderr, "KBD code=%d val=%d\n", ev->code, ev->value);
+    if (ev->type != EV_KEY) return;
+
+    /* The G600 ring signals gshift in two ways depending on firmware/mode:
+       1. ABS_MISC event on fd_prof  → gshift_active set by handle_prof()
+       2. Legacy: hardware holds LSHIFT+B while ring is pressed             */
+    static int lshift_down = 0, keyb_down = 0;
+    if (ev->code == KEY_LEFTSHIFT) { lshift_down = (ev->value != 0); if (lshift_down && keyb_down) gshift_active = 1; else if (!lshift_down) gshift_active = 0; return; }
+    if (ev->code == KEY_B)         { keyb_down   = (ev->value != 0); if (lshift_down && keyb_down) gshift_active = 1; else if (!keyb_down)   gshift_active = 0; return; }
+
     for (int i = 0; i < NUM_GKEYS; i++) {
-    if (ev->code == SRC_GKEYS[i]) {
-        int shifted = gshift_active;
-        Binding *b = shifted ? &active_profile()->gkeys_gshift[i]
-                             : &active_profile()->gkeys_normal[i];
-        dispatch(b, ev->value, shifted ? NUM_GKEYS + i : i);
-        return;
-    }
+        if (ev->code == SRC_GKEYS[i]) {
+            int shifted = gshift_active;
+            Binding *b = shifted ? &active_profile()->gkeys_gshift[i]
+                                 : &active_profile()->gkeys_normal[i];
+            dispatch(b, ev->value, shifted ? NUM_GKEYS + i : i);
+            return;
+        }
 
         if (ev->code == SRC_GKEYS_SHIFT[i]) {
             Binding *b = &active_profile()->gkeys_gshift[i];
@@ -852,13 +880,24 @@ static void handle_kbd(struct input_event *ev) {
 
 static void handle_prof(struct input_event *ev) {
     if (ev->type != EV_ABS || ev->code != ABS_MISC) return;
-    if (ev->value == 0) { gshift_active = 0; return; }
+
+    int val = ev->value;
+
+    /* The G600 profile ring fires noisy transitional values (e.g. 96, 129,
+       131, 3) as the physical ring moves between positions.  Only the clean
+       power-of-two values (32, 64, 128) represent a stable profile slot;
+       value 0 signals "ring released" (end of gshift).  Ignore everything
+       else to prevent spurious profile switches mid-transition. */
+    if (val != 0 && val != 32 && val != 64 && val != 128) return;
+
+    if (val == 0) { gshift_active = 0; return; }
+
     for (int i = 0; i < cfg.num_profiles; i++) {
-        if (cfg.profiles[i].abs_misc_val == ev->value) {
+        if (cfg.profiles[i].abs_misc_val == val) {
             if (i == cur_profile)
-                gshift_active = 1;   /* ring held in current profile */
+                gshift_active = 1;   /* ring held in current profile → gshift */
             else
-                switch_profile(i);   /* hardware profile switch      */
+                switch_profile(i);   /* hardware profile switch               */
             return;
         }
     }

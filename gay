@@ -1,0 +1,43 @@
+Found G600 hidraw at /dev/hidraw1 (VID=046d PID=c24a)
+
+=== Profile 1 (report 0xf3) ===
+  LED:  r=255 g=81 b=255  effect=0 duration=0
+  DPI:  shift=0 default=0  slots=[0 0 0 0]
+  Button slots 0-7 (code / mod / key):
+    slot 0: code=0x00  mod=0x01  key=0x00
+    slot 1: code=0x00  mod=0x02  key=0x00
+    slot 2: code=0x00  mod=0x03  key=0x00
+    slot 3: code=0x04  mod=0x00  key=0x00
+    slot 4: code=0x05  mod=0x00  key=0x00
+    slot 5: code=0x17  mod=0x00  key=0x00
+    slot 6: code=0x00  mod=0x00  key=0x00
+    slot 7: code=0x00  mod=0x00  key=0x00
+  G-shift color: r=255 g=81 b=255
+
+=== Profile 2 (report 0xf4) ===
+  LED:  r=255 g=255 b=0  effect=0 duration=0
+  DPI:  shift=0 default=0  slots=[0 0 0 0]
+  Button slots 0-7 (code / mod / key):
+    slot 0: code=0x00  mod=0x00  key=0x00
+    slot 1: code=0x00  mod=0x00  key=0x00
+    slot 2: code=0x00  mod=0x00  key=0x00
+    slot 3: code=0x04  mod=0x00  key=0x00
+    slot 4: code=0x05  mod=0x00  key=0x00
+    slot 5: code=0x00  mod=0x00  key=0x00
+    slot 6: code=0x00  mod=0x00  key=0x00
+    slot 7: code=0x00  mod=0x00  key=0x00
+  G-shift color: r=255 g=255 b=0
+
+=== Profile 3 (report 0xf5) ===
+  LED:  r=102 g=30 b=30  effect=0 duration=0
+  DPI:  shift=0 default=0  slots=[0 0 0 0]
+  Button slots 0-7 (code / mod / key):
+    slot 0: code=0x01  mod=0x00  key=0x00
+    slot 1: code=0x02  mod=0x00  key=0x00
+    slot 2: code=0x03  mod=0x00  key=0x00
+    slot 3: code=0x04  mod=0x00  key=0x00
+    slot 4: code=0x05  mod=0x00  key=0x00
+    slot 5: code=0x00  mod=0x00  key=0x00
+    slot 6: code=0x14  mod=0x00  key=0x00
+    slot 7: code=0x11  mod=0x00  key=0x00
+  G-shift color: r=102 g=30 b=30

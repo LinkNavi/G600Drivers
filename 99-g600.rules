@@ -1,0 +1,2 @@
+# Logitech G600 Gaming Mouse — grant input group access to hidraw interface
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c24a", GROUP="input", MODE="0660"

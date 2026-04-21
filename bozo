@@ -1,0 +1,136 @@
+# G600 Daemon Config
+# Simple rebind: G9 = F13
+# Macro: G9 = macro:<press|release>:<once|repeat|toggle>: KEY, Nms, KEY+KEY
+
+[profile1]
+abs_misc = 32
+ONBOARD_RING = DPI_SHIFT
+ONBOARD_G7   = PROFILE_NEXT
+ONBOARD_G8   = DPI_UP
+
+led_r = 255
+led_g = 81
+led_b = 255
+led_effect = solid
+led_duration = 4
+
+G9 = macro:press:repeat: BTN_LEFT, 50ms
+G10 = 1
+G11 = 2
+G12 = F16
+G13 = 4
+G14 = F18
+G15 = F19
+G16 = F20
+G17 = F21
+G18 = F22
+G19 = F23
+G20 = F24
+
+SHIFT_G9 = macro:press:repeat: BTN_RIGHT, 50ms
+SHIFT_G10 = 3
+SHIFT_G11 = F3
+SHIFT_G12 = F4
+SHIFT_G13 = F5
+SHIFT_G14 = F6
+SHIFT_G15 = F7
+SHIFT_G16 = F8
+SHIFT_G17 = F9
+SHIFT_G18 = F10
+SHIFT_G19 = F11
+SHIFT_G20 = F12
+
+BTN_LEFT = BTN_LEFT
+BTN_RIGHT = BTN_RIGHT
+MIDDLE = BTN_MIDDLE
+TILT_LEFT = BTN_SIDE
+TILT_RIGHT = BTN_EXTRA
+
+[profile2]
+abs_misc = 64
+ONBOARD_RING = DPI_SHIFT
+ONBOARD_G7   = PROFILE_NEXT
+ONBOARD_G8   = DPI_UP
+
+led_r = 255
+led_g = 255
+led_b = 0
+led_effect = solid
+led_duration = 4
+
+G9 = macro:press:repeat: BTN_LEFT, 50ms
+G10 = F14
+G11 = F15
+G12 = F16
+G13 = F17
+G14 = F18
+G15 = F19
+G16 = F20
+G17 = F21
+G18 = F22
+G19 = F23
+G20 = F24
+
+SHIFT_G9 = macro:press:repeat: BTN_LEFT, 50ms
+SHIFT_G10 = F2
+SHIFT_G11 = F3
+SHIFT_G12 = F4
+SHIFT_G13 = F5
+SHIFT_G14 = F6
+SHIFT_G15 = F7
+SHIFT_G16 = F8
+SHIFT_G17 = F9
+SHIFT_G18 = F10
+SHIFT_G19 = F11
+SHIFT_G20 = F12
+
+BTN_LEFT = BTN_LEFT
+BTN_RIGHT = BTN_RIGHT
+MIDDLE = BTN_MIDDLE
+TILT_LEFT = BTN_SIDE
+TILT_RIGHT = BTN_EXTRA
+
+[profile3]
+abs_misc = 128
+ONBOARD_RING = NONE
+ONBOARD_G7   = PROFILE_NEXT
+ONBOARD_G8   = DPI_UP
+
+led_r = 102
+led_g = 30
+led_b = 30
+led_effect = solid
+led_duration = 4
+
+G9 = macro:press:repeat: R, 50ms
+G10 = F14
+G11 = F15
+G12 = F16
+G13 = F17
+G14 = F18
+G15 = F19
+G16 = F20
+G17 = F21
+G18 = F22
+G19 = F23
+G20 = F24
+
+SHIFT_G9 = G
+SHIFT_G10 = F2
+SHIFT_G11 = F3
+SHIFT_G12 = F4
+SHIFT_G13 = F5
+SHIFT_G14 = F6
+SHIFT_G15 = F7
+SHIFT_G16 = F8
+SHIFT_G17 = F9
+SHIFT_G18 = F10
+SHIFT_G19 = F11
+SHIFT_G20 = F12
+
+BTN_LEFT = BTN_LEFT
+BTN_RIGHT = BTN_RIGHT
+MIDDLE = BTN_MIDDLE
+TILT_LEFT = BTN_SIDE
+TILT_RIGHT = BTN_EXTRA
+
