@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-DEV=hollering-marmot
+DEV=warbling-mara
 
 for p in 0 1 2; do
   echo "=== Profile $p ==="
